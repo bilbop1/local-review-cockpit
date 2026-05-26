@@ -1,0 +1,567 @@
+import AppKit
+import AVFoundation
+import SwiftUI
+
+struct ReviewKitsView: View {
+    @ObservedObject var store: OpsStore
+    @State private var selectedKitID: String?
+    @State private var rejectionNotes = ""
+    @State private var filter = ReviewKitFilter.needsReview
+    @State private var sort = ReviewKitSort.rendered
+    @State private var searchText = ""
+    @FocusState private var rejectionNotesFocused: Bool
+
+    private var visibleKits: [RenderKit] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return store.reviewKits
+            .filter { filter.matches($0) }
+            .filter { kit in
+                guard !query.isEmpty else { return true }
+                return [
+                    kit.title,
+                    displayUserStatus(kit.reviewStatus),
+                    kit.clipSourcePlatform ?? "",
+                    kit.clipSourceURL ?? ""
+                ]
+                .joined(separator: " ")
+                .lowercased()
+                .contains(query)
+            }
+            .sorted { sort.isOrderedBefore($0, $1) }
+    }
+
+    private var selectedKit: RenderKit? {
+        if let selectedKitID, let match = visibleKits.first(where: { $0.id == selectedKitID }) {
+            return match
+        }
+        return visibleKits.first
+    }
+
+    var body: some View {
+        HSplitView {
+            kitList
+                .frame(minWidth: 320, idealWidth: 390, maxWidth: 470)
+            kitDetail
+                .frame(minWidth: 660)
+        }
+        .searchable(text: $searchText, placement: .toolbar, prompt: "Search reviews")
+        .onAppear {
+            keepSelectionValid()
+        }
+        .onChange(of: selectedKitID) { _, _ in
+            rejectionNotes = ""
+        }
+        .onChange(of: visibleKits.map(\.id)) { _, _ in
+            keepSelectionValid()
+        }
+        .accessibilityIdentifier("review-kits-root")
+    }
+
+    private var kitList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionHeader(title: "Review Kits", subtitle: "Newest rendered reviews first. Approval prepares files only; it never publishes.")
+                .padding([.horizontal, .top], 18)
+
+            controls
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+
+            if visibleKits.isEmpty {
+                EmptyStateView(
+                    title: "No Reviews Here",
+                    message: "Try another filter or build the latest reviews from the Dashboard.",
+                    systemImage: "play.rectangle"
+                )
+            } else {
+                List(selection: $selectedKitID) {
+                    ForEach(visibleKits) { kit in
+                        ReviewKitRow(kit: kit)
+                            .tag(kit.id)
+                            .accessibilityIdentifier("review-kit-row-\(kit.id)")
+                    }
+                }
+                .accessibilityIdentifier("review-kit-list")
+            }
+        }
+    }
+
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Filter", selection: $filter) {
+                ForEach(ReviewKitFilter.allCases) { item in
+                    Text(item.title).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("review-kit-filter")
+
+            HStack {
+                Label("\(visibleKits.count) shown", systemImage: "rectangle.stack")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("Sort", selection: $sort) {
+                    ForEach(ReviewKitSort.allCases) { item in
+                        Text(item.title).tag(item)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 150)
+                .accessibilityIdentifier("review-kit-sort")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var kitDetail: some View {
+        if let kit = selectedKit {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    detailHeader(kit)
+                    videoPanel(kit: kit)
+                    decisionPanel(kit: kit)
+                    clipDetailsPanel(kit: kit)
+                    technicalArtifactsPanel(kit: kit)
+                }
+                .padding(22)
+            }
+            .accessibilityIdentifier("review-kit-detail")
+        } else {
+            EmptyStateView(title: "No Kit Selected", message: "Select a review kit from the list.", systemImage: "play.rectangle")
+        }
+    }
+
+    private func detailHeader(_ kit: RenderKit) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(kit.title)
+                    .font(.title2.weight(.semibold))
+                    .lineLimit(2)
+                HStack(spacing: 12) {
+                    Label("Rendered \(displayDateTime(kit.renderedAt ?? kit.createdAt))", systemImage: "wand.and.stars")
+                    Label("Clip \(displayDateTime(kit.clipCreatedAt ?? kit.clipDiscoveredAt))", systemImage: "clock")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 10) {
+                StatusPill(text: displayUserStatus(kit.reviewStatus))
+                HStack(spacing: 6) {
+                    Button {
+                        moveSelection(by: -1)
+                    } label: {
+                        Label("Previous", systemImage: "chevron.up")
+                    }
+                    .labelStyle(.iconOnly)
+                    .keyboardShortcut("[", modifiers: [.command])
+                    .disabled(!canMove(by: -1))
+                    .help("Previous review")
+                    .accessibilityIdentifier("review-kit-previous")
+
+                    Button {
+                        moveSelection(by: 1)
+                    } label: {
+                        Label("Next", systemImage: "chevron.down")
+                    }
+                    .labelStyle(.iconOnly)
+                    .keyboardShortcut("]", modifiers: [.command])
+                    .disabled(!canMove(by: 1))
+                    .help("Next review")
+                    .accessibilityIdentifier("review-kit-next")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func videoPanel(kit: RenderKit) -> some View {
+        if let url = kit.videoURL {
+            ReviewVideoPanel(kitID: kit.id, url: url, path: kit.reviewVideoPath)
+        } else {
+            VStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 34))
+                    .foregroundStyle(.red)
+                Text("Preview Missing")
+                    .font(.headline)
+                Text("This review is blocked until the rendered video exists and previews in the app.")
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 260)
+            .padding()
+            .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private func decisionPanel(kit: RenderKit) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Decision")
+                    .font(.headline)
+                Spacer()
+                Text("Approval does not publish.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Button {
+                    Task { await store.approve(kit: kit) }
+                } label: {
+                    Label("Approve for Prep", systemImage: "checkmark.circle")
+                }
+                .disabled(kit.videoURL == nil)
+                .keyboardShortcut(.return, modifiers: [.command])
+                .accessibilityIdentifier("review-kit-approve")
+
+                TextField("Revision note required", text: $rejectionNotes, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1...3)
+                    .focused($rejectionNotesFocused)
+                    .accessibilityIdentifier("review-kit-rejection-notes")
+
+                Button {
+                    rejectionNotesFocused = true
+                } label: {
+                    Label("Note", systemImage: "text.bubble")
+                }
+                .keyboardShortcut("r", modifiers: [.command])
+                .accessibilityIdentifier("review-kit-focus-reject-note")
+
+                Button {
+                    Task {
+                        await store.reject(kit: kit, notes: rejectionNotes)
+                        rejectionNotes = ""
+                    }
+                } label: {
+                    Label("Send Back", systemImage: "arrow.uturn.backward.circle")
+                }
+                .disabled(rejectionNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("review-kit-reject")
+            }
+        }
+        .padding(16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("review-kit-decision-panel")
+    }
+
+    private func clipDetailsPanel(kit: RenderKit) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Clip Details")
+                .font(.headline)
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
+                InfoRow(label: "Broadcast", value: displayDateTime(kit.clipCreatedAt ?? kit.clipDiscoveredAt))
+                InfoRow(label: "Kit created", value: displayDateTime(kit.createdAt))
+                InfoRow(label: "Rendered", value: displayDateTime(kit.renderedAt ?? kit.createdAt))
+                InfoRow(label: "Views", value: formatCount(kit.clipViewCount))
+                InfoRow(label: "Duration", value: formatDuration(kit.clipDuration))
+                InfoRow(label: "Platform", value: displayStatus(kit.clipSourcePlatform ?? "Unknown"))
+            }
+
+            HStack(alignment: .firstTextBaseline) {
+                Text("Source")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 150, alignment: .leading)
+                if let source = kit.clipSourceURL, let url = URL(string: source) {
+                    Link(shortText(source, limit: 90), destination: url)
+                        .font(.callout)
+                } else {
+                    Text("Not set")
+                        .font(.callout)
+                }
+                Spacer(minLength: 0)
+            }
+
+            if !kit.approvedAt.isEmpty {
+                InfoRow(label: "Approved", value: displayDateTime(kit.approvedAt))
+            }
+        }
+        .padding(16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("review-kit-clip-details")
+    }
+
+    private func technicalArtifactsPanel(kit: RenderKit) -> some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 12) {
+                InfoRow(label: "Kit ID", value: kit.id)
+                InfoRow(label: "Nomination", value: kit.nominationID)
+                InfoRow(label: "Video file", value: kit.reviewVideoPath)
+                if !kit.rejectionNotes.isEmpty {
+                    InfoRow(label: "Revision note", value: kit.rejectionNotes)
+                }
+                ArtifactText(title: "Caption", path: kit.captionPath)
+                ArtifactText(title: "Transcript", path: kit.transcriptPath)
+                ArtifactText(title: "Checklist", path: kit.checklistPath)
+                ArtifactText(title: "Risk", path: kit.riskPath)
+                ArtifactText(title: "Source", path: kit.sourcePath)
+            }
+            .padding(.top, 10)
+        } label: {
+            Label("Technical Artifacts", systemImage: "shippingbox")
+                .font(.headline)
+        }
+        .padding(16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("review-kit-technical-artifacts")
+    }
+
+    private func keepSelectionValid() {
+        guard !visibleKits.isEmpty else {
+            selectedKitID = nil
+            return
+        }
+        if let selectedKitID, visibleKits.contains(where: { $0.id == selectedKitID }) {
+            return
+        }
+        selectedKitID = visibleKits.first?.id
+    }
+
+    private func canMove(by delta: Int) -> Bool {
+        guard let selectedKitID, let index = visibleKits.firstIndex(where: { $0.id == selectedKitID }) else {
+            return false
+        }
+        let target = index + delta
+        return target >= 0 && target < visibleKits.count
+    }
+
+    private func moveSelection(by delta: Int) {
+        guard !visibleKits.isEmpty else { return }
+        guard let selectedKitID, let index = visibleKits.firstIndex(where: { $0.id == selectedKitID }) else {
+            self.selectedKitID = visibleKits.first?.id
+            return
+        }
+        let target = min(max(index + delta, 0), visibleKits.count - 1)
+        self.selectedKitID = visibleKits[target].id
+    }
+}
+
+private enum ReviewKitFilter: String, CaseIterable, Identifiable, Hashable {
+    case needsReview
+    case approved
+    case rejected
+    case all
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .needsReview: "Needs Review"
+        case .approved: "Approved"
+        case .rejected: "Rejected"
+        case .all: "All"
+        }
+    }
+
+    func matches(_ kit: RenderKit) -> Bool {
+        let status = kit.reviewStatus.lowercased()
+        switch self {
+        case .needsReview:
+            return status.contains("review") || status.contains("pending")
+        case .approved:
+            return status.contains("approved")
+        case .rejected:
+            return status.contains("reject")
+        case .all:
+            return true
+        }
+    }
+}
+
+private enum ReviewKitSort: String, CaseIterable, Identifiable, Hashable {
+    case rendered
+    case created
+    case clipTime
+    case views
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .rendered: "Rendered"
+        case .created: "Created"
+        case .clipTime: "Clip Time"
+        case .views: "Views"
+        }
+    }
+
+    func isOrderedBefore(_ lhs: RenderKit, _ rhs: RenderKit) -> Bool {
+        switch self {
+        case .rendered:
+            return newer(lhs.renderedAt ?? lhs.createdAt, rhs.renderedAt ?? rhs.createdAt, fallbackLHS: lhs.createdAt, fallbackRHS: rhs.createdAt)
+        case .created:
+            return newer(lhs.createdAt, rhs.createdAt)
+        case .clipTime:
+            return newer(lhs.clipCreatedAt ?? lhs.clipDiscoveredAt, rhs.clipCreatedAt ?? rhs.clipDiscoveredAt, fallbackLHS: lhs.createdAt, fallbackRHS: rhs.createdAt)
+        case .views:
+            let left = lhs.clipViewCount ?? 0
+            let right = rhs.clipViewCount ?? 0
+            if left != right { return left > right }
+            return newer(lhs.renderedAt ?? lhs.createdAt, rhs.renderedAt ?? rhs.createdAt, fallbackLHS: lhs.createdAt, fallbackRHS: rhs.createdAt)
+        }
+    }
+
+    private func newer(_ lhs: String?, _ rhs: String?, fallbackLHS: String? = nil, fallbackRHS: String? = nil) -> Bool {
+        let left = parseDate(lhs) ?? parseDate(fallbackLHS) ?? .distantPast
+        let right = parseDate(rhs) ?? parseDate(fallbackRHS) ?? .distantPast
+        if left != right { return left > right }
+        return (lhs ?? "") > (rhs ?? "")
+    }
+}
+
+private struct ReviewKitRow: View {
+    var kit: RenderKit
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(kit.title)
+                    .font(.headline)
+                    .lineLimit(2)
+                Spacer()
+                StatusPill(text: displayUserStatus(kit.reviewStatus))
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Broadcast \(compactDateTime(kit.clipCreatedAt ?? kit.clipDiscoveredAt))", systemImage: "clock")
+                Label("Created \(compactDateTime(kit.createdAt))", systemImage: "plus.circle")
+                Label("Rendered \(compactDateTime(kit.renderedAt ?? kit.createdAt))", systemImage: "wand.and.stars")
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                if let platform = kit.clipSourcePlatform, !platform.isEmpty {
+                    Label(displayStatus(platform), systemImage: platform.lowercased() == "twitch" ? "play.tv" : "bolt.circle")
+                }
+                Label(formatDuration(kit.clipDuration), systemImage: "timer")
+                Label(formatCount(kit.clipViewCount), systemImage: "eye")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+private struct ReviewVideoPanel: View {
+    var kitID: String
+    var url: URL
+    var path: String
+
+    @State private var playerReady = false
+    @State private var thumbnail: NSImage?
+    @State private var thumbnailFailed = false
+
+    var body: some View {
+        ZStack {
+            CrashSafeVideoPreview(url: url, isReady: $playerReady)
+
+            if !playerReady {
+                thumbnailBackground
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .controlSize(.large)
+                    Text(thumbnailFailed ? "Starting Preview" : "Preparing Preview")
+                        .font(.headline)
+                }
+                .foregroundStyle(.white)
+                .padding(28)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.black.opacity(0.22))
+            } else {
+                StatusPill(text: "autoplaying", systemImage: "play.circle")
+                    .padding(12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+        }
+        .id(kitID)
+        .frame(minHeight: 520)
+        .background(.black, in: RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .onChange(of: kitID) { _, _ in
+            playerReady = false
+            thumbnail = nil
+            thumbnailFailed = false
+        }
+        .onDisappear { playerReady = false }
+        .task(id: kitID) {
+            await loadThumbnail()
+        }
+        .accessibilityIdentifier("review-kit-video-autoplay")
+    }
+
+    @ViewBuilder
+    private var thumbnailBackground: some View {
+        if let thumbnail {
+            Image(nsImage: thumbnail)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.black)
+                .overlay(.black.opacity(0.34))
+        } else {
+            Color.black
+        }
+    }
+
+    @MainActor
+    private func loadThumbnail() async {
+        guard thumbnail == nil, !thumbnailFailed else { return }
+        let asset = AVURLAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 720, height: 1280)
+        do {
+            let image = try generator.copyCGImage(at: CMTime(seconds: 1.0, preferredTimescale: 600), actualTime: nil)
+            thumbnail = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+        } catch {
+            thumbnailFailed = true
+        }
+    }
+}
+
+private struct ArtifactText: View {
+    var title: String
+    var path: String
+
+    var body: some View {
+        DisclosureGroup(title) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Text(readSmallTextFile(path))
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(.background.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+            }
+            .padding(.top, 8)
+        }
+    }
+}
+
+private func formatDuration(_ duration: Double?) -> String {
+    guard let duration else { return "Unknown" }
+    if duration >= 60 {
+        return String(format: "%.0fm %.0fs", floor(duration / 60), duration.truncatingRemainder(dividingBy: 60))
+    }
+    return String(format: "%.1fs", duration)
+}
+
+private func formatCount(_ count: Int?) -> String {
+    guard let count else { return "Unknown" }
+    if count >= 1_000_000 {
+        return String(format: "%.1fM", Double(count) / 1_000_000)
+    }
+    if count >= 1_000 {
+        return String(format: "%.1fK", Double(count) / 1_000)
+    }
+    return "\(count)"
+}
