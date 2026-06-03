@@ -45,8 +45,8 @@ These constraints intentionally create faster beat timing. That is expected. The
 - Active campaign renders are streamer-first: YourRAGE, PlaqueBoyMax, and JasonTheWeen.
 - Haste stays excluded unless it supplies verified source media; do not content-generate for it.
 - Lacy stays demoted unless the clip actually satisfies the campaign brief.
-- Kalshi and Dunkman remain archived/non-primary for this handoff lane.
-- The handoff book in `docs/CODEX_HANDOFF_BOOK.md` contains the full campaign and packaging rules.
+- Kalshi and Dunkman remain archived/non-primary for this source-clone lane.
+- The incoming Codex book in `docs/CODEX_HANDOFF_BOOK.md` contains the full campaign and operating rules.
 
 ## A/B Variants
 
@@ -61,4 +61,4 @@ Variant C is excluded from production testing. Every rendered kit writes its sel
 
 ## Handoff Rule
 
-The no-key Codex/GitHub handoff includes the vendored font files and this standard. Buddy sessions must keep the same rule unless the operator explicitly approves a new caption style after reviewing A/B examples and rerunning burned-caption verification.
+The no-key Codex/GitHub source clone includes the vendored font files and this standard. Incoming sessions must keep the same rule unless the operator explicitly approves a new caption style after reviewing A/B examples and rerunning burned-caption verification.

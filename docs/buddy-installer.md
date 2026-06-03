@@ -1,18 +1,18 @@
-# Buddy No-Key Installer
+# Incoming No-Key Setup
 
-The full Codex-to-Codex handoff guide lives in `docs/CODEX_HANDOFF_BOOK.md`. Treat that book as the source of truth for campaign choice, caption rules, Hermes setup, and final readiness gates.
+You are an incoming Codex/Hermes-backed session setting this repo up on a new operator's machine. The main operating manual lives in `docs/CODEX_HANDOFF_BOOK.md`. Treat that book as the source of truth for campaign choice, caption rules, Hermes setup, and readiness gates.
 
 Use `script/setup_buddy_no_key.sh` to install and verify the same local system shape without transferring secrets.
 
-Use the public GitHub source repo when the recipient is another Codex session that will clone the project and build locally:
+Clone the public GitHub source repo and build locally:
 
 ```text
 https://github.com/bilbop1/local-review-cockpit
 ```
 
-`script/package_codex_handoff.sh` remains available for a private offline source zip, but GitHub clone is the preferred handoff lane. Source-build handoff does not require Developer ID signing or notarization. Apple signing/notarization only matters for a prebuilt `.app` handed to a normal Mac user outside the Codex rebuild workflow.
+`script/package_codex_handoff.sh` remains available for a private offline source snapshot, but GitHub clone is the normal path. Source-build setup does not require Developer ID signing or notarization. Apple signing/notarization only matters for a prebuilt `.app` handed to a normal Mac user outside the Codex rebuild workflow.
 
-The originating operator approved the current active validated review batch for manual prep before public source handoff. The repository still does not include those review videos or source media.
+The originating operator approved the current active validated review batch for manual prep before publishing this source repo. The repository still does not include those review videos or source media.
 
 The installer checks for Swift, `uv`, Python, `ffmpeg`, `ffprobe`, and Hermes, then builds the app, starts the local backend, renders demo kits, and runs smoke tests. It runs with `CLIPPING_OPS_NO_KEY=1` and an isolated `CLIPPING_OPS_HOME` so ambient Keychain credentials are ignored.
 
@@ -28,11 +28,11 @@ It intentionally does not copy:
 - downloaded source media
 - rendered review kits
 
-Real campaign ingestion remains blocked until your buddy signs into their own services and provides their own credentials. The demo review-kit path works from local/sample media only.
+Real campaign ingestion remains blocked until the local operator signs into their own services and provides their own credentials. The demo review-kit path works from local/sample media only.
 
-Normal app actions queue Hermes job intents. Your buddy must configure their own Hermes profile/provider locally; the kit never transfers your Hermes auth, model provider auth, Discord gateway credentials, or API keys.
+Normal app actions queue Hermes job intents. The local operator must configure their own Hermes profile/provider locally; this repo never transfers Hermes auth, model provider auth, Discord gateway credentials, or API keys.
 
-The source handoff includes the caption standard and vendored TikTok Sans font files. Campaign renders should keep TikTok Sans Black subtitles, max 2 words per beat, platform-safe lower-third placement, and no internal proof/review labels unless your buddy explicitly redesigns the caption style after their own review.
+The source repo includes the caption standard and vendored TikTok Sans font files. Campaign renders should keep TikTok Sans Black subtitles, max 2 words per beat, platform-safe lower-third placement, and no internal proof/review labels unless the local operator explicitly redesigns the caption style after their own review.
 
 The current campaign standard is streamer-first: YourRAGE, PlaqueBoyMax, and JasonTheWeen are active; Haste stays excluded unless a real linked source pack appears; Lacy stays demoted unless a clip actually matches the arrested/missing-in-action brief.
 

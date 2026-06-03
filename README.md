@@ -4,9 +4,9 @@
 
 The system follows the PDF rule: index many, render few, publish only with approval. Demo kits are clearly labeled and never treated as campaign output.
 
-This public repo is a source-build handoff. It intentionally contains no API keys, Hermes auth, Discord tokens, browser sessions, Keychain exports, local SQLite database, source media, rendered review videos, or app-support artifacts.
+This public repo is a source-build clone for incoming Codex/Hermes-backed sessions. It intentionally contains no API keys, Hermes auth, Discord tokens, browser sessions, Keychain exports, local SQLite database, source media, rendered review videos, or app-support artifacts.
 
-## Public Handoff
+## Incoming Setup
 
 ```bash
 git clone https://github.com/bilbop1/local-review-cockpit.git
@@ -42,13 +42,12 @@ The run script starts the local backend at `http://127.0.0.1:8765`, builds the S
 ./script/smoke_test.sh
 python3 script/desktop_qa.py
 ./script/setup_buddy_no_key.sh
-./script/package_codex_handoff.sh
 ./script/install_hermes_clip_ops.sh
 ./script/store_credentials_keychain.sh
 ./script/install_backend_launch_agent.sh
 ```
 
-`package_codex_handoff.sh` still exists for private offline source zips, but the preferred handoff is this GitHub source repo. `package_release.sh` is separate: Developer ID signing and notarization are only required when distributing a prebuilt `.app` to normal Mac users.
+`package_release.sh` is separate: Developer ID signing and notarization are only required when distributing a prebuilt `.app` to normal Mac users.
 
 ## Safety Gates
 

@@ -19,14 +19,14 @@
 
 The default product target remains 15 approved reviews: 5 YourRAGE, 5 PlaqueBoyMax, and 5 JasonTheWeen.
 
-For the public source handoff, the operator approved the current active validated batch instead of padding to 15 with weaker clips:
+The originating operator approved the current active validated batch before publishing this source clone, instead of padding to 15 with weaker clips:
 
 - JasonTheWeen: 4 approved active kits.
 - YourRAGE: 3 approved active kits.
 - PlaqueBoyMax: 3 approved active kits.
-- 2 timing-unsafe/rejected kits remain rejected for revision and are not part of the handoff batch.
+- 2 timing-unsafe/rejected kits remain rejected for revision and are not part of the inherited approved batch.
 
-If a future operator wants the full 15-kit target, build only stronger new candidates. Do not pad with low-view, generic-title, overlong, mistimed, or visually pointless filler. If the active batch is weaker than expected, keep the batch smaller instead of padding.
+If this operator wants the full 15-kit target, build only stronger new candidates. Do not pad with low-view, generic-title, overlong, mistimed, or visually pointless filler. If the active batch is weaker than expected, keep the batch smaller instead of padding.
 
 ## Campaign Selection Rules
 
@@ -46,7 +46,7 @@ If a future operator wants the full 15-kit target, build only stronger new candi
 - Timing must be checked by watching the video with audio. Passing JSON is not enough.
 - Ensemble-consensus captions still need render-time visual/audio delay; do not bypass the delay just because multiple transcription models agree.
 - Reject or rebuild clips with long fake ASR word spans, one-vote timing beats, or high-spread timing votes.
-- `script/verify_burned_in_captions.py` must be green for all active kits before handoff packaging.
+- `script/verify_burned_in_captions.py` must be green for all active kits before any readiness claim.
 
 ## Hard Stops
 
@@ -55,4 +55,4 @@ If a future operator wants the full 15-kit target, build only stronger new candi
 - No account connection or account rebrand.
 - No real campaign render without stored campaign rules, source URL, provenance, and source availability.
 - No Ready To Post without playable H.264/AAC 1080x1920 preview and all kit files.
-- No final handoff claim until the chosen review target is explicit and the active kits have been reviewed.
+- No readiness claim until the chosen review target is explicit and the active kits have been reviewed.

@@ -1,56 +1,67 @@
-# Clipping Ops Cockpit Codex Handoff Book
+# Clipping Ops Cockpit Incoming Codex Book
 
-Generated for the local Clipping Ops Cockpit project. This is the guide to hand to another Codex or Hermes-backed coding session after the project is published as a public-but-lowkey source repo. It explains what the system is, what is intentionally not included, how to configure a no-key local copy, and how to keep campaign review quality high instead of filling the queue with random valid-but-boring clips.
+You are an incoming Codex or Hermes-backed coding session taking over a cloned copy of Clipping Ops Cockpit. Read this as your operating manual, not as instructions to create another handoff.
 
-Public source handoff target:
+Repository:
 
 ```text
 https://github.com/bilbop1/local-review-cockpit
 ```
 
-This repo is a source-build handoff, not a media drop and not a prebuilt notarized app. It contains the app/backend/scripts/docs/Hermes prompts needed for another session to rebuild and configure the same style of local pipeline without inheriting the original operator's secrets.
+This repo is a source-build project, not a media drop and not a prebuilt notarized app. It contains the app, backend, scripts, docs, tests, and Hermes prompts needed to rebuild and operate the same local pipeline without inheriting the original operator's secrets.
 
-## Current Handoff Status
+Your job as the incoming session:
+
+1. Clone the repo.
+2. Run no-key setup and build verification.
+3. Help the local operator add their own API keys, Hermes profile, Discord config, and campaign access.
+4. Keep the backend/SQLite as source of truth.
+5. Use Hermes as the normal orchestration layer.
+6. Never publish, submit payouts, connect accounts, rebrand accounts, or claim revenue guarantees.
+
+## What You Inherited
 
 Current truthful state from the live backend on June 3, 2026:
 
-- Buddy no-key setup: green.
-- Codex source/build handoff: green.
-- Public GitHub source handoff: green once the public repo is pushed and security scan is clean.
+- No-key setup path: green.
+- Codex source/build clone path: green.
+- Public GitHub source repo: pushed and verified clean.
 - Active validated review surface: 10 rendered campaign review kits.
 - Operator approval: 10 active validated kits approved for manual prep.
-- Rejected/unsafe review kits: 2 remain rejected for revision and are not part of the approved handoff batch.
+- Rejected/unsafe review kits: 2 remain rejected for revision and are not part of the inherited approved batch.
 - Active campaign counts in the approved batch: JasonTheWeen 4, YourRAGE 3, PlaqueBoyMax 3.
 - Burned-in subtitle proof: green after fresh verification across all 10 active non-rejected kits.
-- Internal local readiness: still yellow if the product target remains 5 kits per campaign / 15 total. The approved source handoff is allowed because the user intentionally accepted the current best batch instead of padding with weak filler.
-- Customer/prebuilt app ship: yellow unless a Developer ID signed and notarized `.app` is produced. This does not block source-build GitHub handoff.
+- Internal local readiness: still yellow if the product target remains 5 kits per campaign / 15 total. The operator intentionally accepted the current best batch instead of padding with weak filler.
+- Customer/prebuilt app ship: yellow unless a Developer ID signed and notarized `.app` is produced. This does not block this source-build clone.
 
 Do not call the system production-ready until `/api/readiness` says the intended target is green with fresh proof.
 
-## What Must Happen Before Public Repo Handoff
+## First Run
 
-1. Mark only validated active review kits approved. Do not approve kits that failed subtitle/editorial proof.
-2. Keep generated review videos, downloaded source media, local SQLite, artifacts, Keychain items, Hermes auth, Discord tokens, and browser sessions out of git.
-3. Regenerate or update docs so they describe source-build GitHub handoff, not a secret-bearing local zip.
-4. Run the public-source checks:
+Start here after cloning:
+
+```bash
+./script/setup_buddy_no_key.sh
+./script/build_and_run.sh --verify
+```
+
+Then run the baseline checks:
 
 ```bash
 swift build
-cd backend && uv run python -m unittest discover -s ../tests -v
-cd ..
+PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s tests -v
 ./script/smoke_test.sh
-./script/security_scan.py
-uv run python script/verify_burned_in_captions.py
-uv run python script/verify_streamer_composition.py
+backend/.venv/bin/python script/security_scan.py
 ```
 
-5. Create/push the public repo:
+If the local operator has review kits and media, also run:
 
 ```bash
-gh repo create bilbop1/local-review-cockpit --public --source=. --remote=origin --push
+backend/.venv/bin/python script/verify_burned_in_captions.py
+backend/.venv/bin/python script/verify_streamer_composition.py
 ```
 
-If the repo already exists, add it as `origin` and push `main`.
+No-key mode should show missing Twitch/Kick credentials. That is correct until the operator supplies their own keys.
 
 ## What The System Is
 
@@ -76,7 +87,7 @@ The system is not:
 
 ## No-Key Buddy Setup
 
-The public repo is for another Codex session that will build locally.
+This repo is for your Codex session to build locally.
 
 It must not include:
 
@@ -91,7 +102,7 @@ It must not include:
 - Rendered review videos.
 - SQLite databases or app-support state.
 
-The buddy’s Codex should clone the source package, install dependencies, and run:
+If you have not cloned it yet:
 
 ```bash
 git clone https://github.com/bilbop1/local-review-cockpit.git
@@ -100,11 +111,11 @@ cd local-review-cockpit
 ./script/build_and_run.sh
 ```
 
-No-key mode should show Twitch/Kick credentials as missing. That is correct. Demo mode can open and render local proof kits; production campaign jobs must block until the buddy supplies their own credentials and source access.
+No-key mode should show Twitch/Kick credentials as missing. That is correct. Demo mode can open and render local proof kits; production campaign jobs must block until the local operator supplies their own credentials and source access.
 
 ## Credential Setup Expectations
 
-Each buddy must provide their own platform credentials.
+Each operator must provide their own platform credentials.
 
 Twitch:
 
@@ -309,38 +320,31 @@ Important artifacts:
 - `artifacts/review-kit-audit/streamer-composition-verification.json`
 - `artifacts/security/security-scan.json`
 - `artifacts/product-proof/artifact-summary.json`
-- `artifacts/handoff/codex-handoff.json`
 
-## Publication Rules
+## Repo Boundary Rules
 
-There are two different shipping lanes.
+This repository has already been published as a source-build repo. Do not treat this section as instructions to create another repo.
 
-Public GitHub source handoff:
+Keep out of git:
 
-- Publish source/build scripts/docs to `bilbop1/local-review-cockpit`.
-- No secrets.
-- No downloaded source media.
-- No rendered review videos.
-- No local SQLite/app-support state.
-- No Developer ID required.
-- Buddy’s Codex/Hermes-backed session rebuilds locally.
-- This is the intended buddy handoff.
+- API keys.
+- Hermes auth.
+- Discord tokens or webhook URLs.
+- `.env` files.
+- macOS Keychain items.
+- Signed-in browser sessions.
+- Local SQLite databases.
+- Downloaded source media.
+- Rendered review kits.
+- Generated artifacts unless the operator explicitly asks for a local proof file.
 
-Private offline Codex source zip:
+You may use `./script/package_codex_handoff.sh` only as a private offline source snapshot fallback. The normal workflow is to work from this GitHub clone.
 
-- Optional fallback through `./script/package_codex_handoff.sh`.
-- Same no-secret/no-media/no-database rules.
-- Useful if GitHub is unavailable or a buddy cannot access the public repo.
+Developer ID signing and notarization matter only for distributing a prebuilt `.app` to normal Mac users. They are not required for a Codex/Hermes source-build clone.
 
-Prebuilt Mac app handoff:
+## Operating Checklist
 
-- Requires signed/notarized app for normal Mac users.
-- Developer ID signing and notarization only matter here.
-- This is not required for a Codex-to-Codex source handoff.
-
-## Final Handoff Checklist
-
-Before packaging:
+Before claiming a local system is ready:
 
 - Active review surface has only current campaign kits.
 - No demo/local proof kits appear in active Review Kits.
@@ -355,10 +359,4 @@ Before packaging:
 - Security scan is green.
 - Desktop QA is green.
 - No-key installer proof is green.
-- Public GitHub source repo is clean, pushed, and cloneable.
-
-Only then publish:
-
-```bash
-gh repo create bilbop1/local-review-cockpit --public --source=. --remote=origin --push
-```
+- Hermes job execution works or readiness honestly says Hermes is degraded.

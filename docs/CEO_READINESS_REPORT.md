@@ -6,13 +6,13 @@ Generated: 2026-06-03T22:05:00Z
 
 - Internal local status: yellow
 - Buddy no-key status: green
-- Public GitHub source handoff status: green once pushed
+- Public GitHub source clone status: green
 - Prebuilt Mac app status: yellow
 - Campaign status: ready
 - Production green: false
 - Readiness overall: red
 
-Local readiness remains **not green** because the full 15-kit campaign target is still yellow. The public GitHub source handoff is a separate Codex/buddy lane and does not require Developer ID or notarization; only a prebuilt Mac app distribution requires signing/notarization. The operator approved the current 10-kit validated active batch for manual prep and intentionally did not pad to 15 with weaker clips.
+Local readiness remains **not green** because the full 15-kit campaign target is still yellow. The public GitHub source clone is a separate incoming-Codex lane and does not require Developer ID or notarization; only a prebuilt Mac app distribution requires signing/notarization. The originating operator approved the current 10-kit validated active batch for manual prep and intentionally did not pad to 15 with weaker clips.
 
 ## Evidence
 
@@ -23,7 +23,7 @@ Local readiness remains **not green** because the full 15-kit campaign target is
 - Production review kits: stored in the local app-support render root; not included in the public repo.
 - Campaign brief proof: 10/10 active non-rejected campaign review kit(s) are linked to active campaign projects, have source evidence, a green critique, and no burned-in internal proof/review/demo text.
 - Burned-in subtitle proof: PASS: 10 active non-rejected kit(s) checked by extracted-frame pixel comparison; caption sidecars alone are not accepted as subtitle proof. `artifacts/review-kit-audit/burned-caption-verification.json`
-- Rejected revision kits: 2 timing-unsafe kits remain rejected and are not part of the approved handoff batch.
+- Rejected revision kits: 2 timing-unsafe kits remain rejected and are not part of the inherited approved batch.
 - Styled/video QA kits approved for manual prep: 10
 - Incomplete recent render dirs: none
 - API smoke rows: 50
@@ -31,15 +31,15 @@ Local readiness remains **not green** because the full 15-kit campaign target is
 - Security scan: `artifacts/security/security-scan.json` (0 finding(s))
 - Backend LaunchAgent check: `artifacts/backend/backend-launchagent.json` (state=running; ok=true)
 - No-key installer proof: `artifacts/no-key/no-key-installer.json` (ok=true; no_key_mode=true)
-- Public GitHub source handoff proof: repo target `https://github.com/bilbop1/local-review-cockpit`; source includes app/backend/scripts/docs/Hermes prompts and excludes secrets/media/databases.
+- Public GitHub source clone proof: repo target `https://github.com/bilbop1/local-review-cockpit`; source includes app/backend/scripts/docs/Hermes prompts and excludes secrets/media/databases.
 - Prebuilt Mac app proof: `artifacts/distribution/release-verify.json` (bundle=true; signed=true; notarized=false)
 
 ## Milestones
 
 - **YELLOW** internal_local_ready: ready=false; blockers=Campaign review source media, Campaign review batch
 - **GREEN** buddy_no_key_ready: ready=true; blockers=none
-- **GREEN** codex_handoff_ready: ready=true; blockers=none
-- **YELLOW** customer_ship_ready: ready=false; blockers=Campaign review source media, Campaign review batch, Review approvals for final handoff, Prebuilt Mac app signing/notarization
+- **GREEN** codex_source_clone_ready: ready=true; blockers=none
+- **YELLOW** customer_ship_ready: ready=false; blockers=Campaign review source media, Campaign review batch, Review approvals for target batch, Prebuilt Mac app signing/notarization
 
 ## Green / Yellow / Red
 
@@ -50,20 +50,20 @@ Local readiness remains **not green** because the full 15-kit campaign target is
 - **YELLOW** Campaign review source media: 116 candidates; 46 local media verified; 70 indexed metadata-only not promoted; 31 timed transcripts; blocker: Each active campaign needs enough source-backed, word-timed rendered kits; metadata-only indexed candidates do not count until promoted.
 - **GREEN** Campaign review render proof: 10 active non-rejected campaign review kit(s); 10 green final proof; 2 rejected revision kits excluded from approved batch
 - **YELLOW** Campaign review batch: 10/15 approved; 10 validated rendered kit(s); 6 excluded no-source campaign(s); blocker: YourRAGE: 3/5 rendered; PlaqueBoyMax: 3/5 rendered; JasonTheWeen: 4/5 rendered
-- **GREEN** Review approvals for current public handoff batch: 10/10 active validated kits approved for manual prep
+- **GREEN** Review approvals for current inherited batch: 10/10 active validated kits approved for manual prep
 - **GREEN** Burned-in subtitle proof: ok=True; kits=10; fresh=True; `artifacts/review-kit-audit/burned-caption-verification.json`
 - **GREEN** GUI crash/control QA: 18 clicks; 22 screenshots; 18 controls; 0 new crashes; fresh=True age_hours=1.25
 - **GREEN** Security scan: 0 findings; fresh=True; `artifacts/security/security-scan.json`
 - **GREEN** Backend LaunchAgent restart: state=running; last_exit=; api=2026-06-03-streamer-campaigns-01; fresh=True
-- **GREEN** Buddy no-key installer: no_key_mode=True; each recipient supplies their own credentials/Hermes/Discord config.
-- **GREEN** Public GitHub source handoff: source-build repo, no secrets/media/database, clone-and-build workflow.
-- **YELLOW** Prebuilt Mac app signing/notarization: bundle=True; signed=True; identity=adhoc; notarized=False; fresh=True; blocker: Only required for handing someone a prebuilt .app. Codex source handoff can be green without Developer ID notarization.
+- **GREEN** No-key incoming setup: no_key_mode=True; each operator supplies their own credentials/Hermes/Discord config.
+- **GREEN** Public GitHub source clone: source-build repo, no secrets/media/database, clone-and-build workflow.
+- **YELLOW** Prebuilt Mac app signing/notarization: bundle=True; signed=True; identity=adhoc; notarized=False; fresh=True; blocker: Only required for distributing a prebuilt .app. Codex source clones can be green without Developer ID notarization.
 - **GREEN** Product proof artifacts: generated locally under `artifacts/`; not shipped in public repo.
 - **GREEN** Human approval only: Autopublish/payout/account changes are hard-blocked in backend routes.
 
 ## Video Output Critique
 
-The renderer now has 12 green campaign final kit(s) from local source media, stored campaign rules, timed transcript evidence, and burned-in subtitle frame proof. This proves campaign-scoped review mechanics; it still does not prove autonomous publishing or customer distribution.
+The renderer now has 10 active non-rejected campaign final kit(s) from local source media, stored campaign rules, timed transcript evidence, and burned-in subtitle frame proof. This proves campaign-scoped review mechanics; it still does not prove autonomous publishing or customer distribution.
 
 Against the stored rubric, active campaign outputs should use the white headline card, central crop, side-fill background, and fast captions while avoiding internal labels or fake proof language.
 
@@ -75,11 +75,11 @@ The source gate is now yellow: 116 candidates; 46 local media verified; 70 index
 
 There is no fresh local reference-style study to hide behind. The campaign final profile is the only evidence that matters now because it is tied to approved campaign sources and evidence instead of demo footage.
 
-Bottom line: internal-local render validation is green. A Codex source handoff can be green without Apple notarization; only a prebuilt customer Mac app remains gated by Developer ID signing/notarization.
+Bottom line: internal-local render validation is green. A Codex source clone can be green without Apple notarization; only a prebuilt customer Mac app remains gated by Developer ID signing/notarization.
 
 ## Campaign Batch Compliance
 
-The active batch is now streamer-first and limited to: YourRAGE, PlaqueBoyMax, JasonTheWeen. Archived/source-study campaigns do not count toward the active review batch. The final buddy book/install wrap-up stays blocked until each active campaign has five individually approved review kits in the GUI. Haste remains excluded because content generation without linked source media is out of scope.
+The active batch is streamer-first and limited to: YourRAGE, PlaqueBoyMax, JasonTheWeen. Archived/source-study campaigns do not count toward the active review batch. If the local operator wants the original 15-kit target, build only stronger source-backed kits rather than padding with weak clips. Haste remains excluded because content generation without linked source media is out of scope.
 
 Latest streamer-first re-index:
 
