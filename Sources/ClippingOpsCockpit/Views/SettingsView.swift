@@ -70,7 +70,7 @@ struct SettingsView: View {
             }
             InfoRow(label: "Local media pipeline", value: health.localDemoStatus ?? health.status)
             InfoRow(label: "Campaign", value: health.campaignStatus ?? "blocked")
-            InfoRow(label: "Customer ship", value: (health.productionGreen ?? false) ? "Ready" : "Blocked until signed release")
+            InfoRow(label: "Review system", value: (health.productionGreen ?? false) ? "Ready" : "Waiting on review/source gates")
             DisclosureGroup("Advanced Paths and Checks") {
                 VStack(alignment: .leading, spacing: 10) {
                     InfoRow(label: "App support", value: health.appSupport)

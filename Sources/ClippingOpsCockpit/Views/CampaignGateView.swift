@@ -23,7 +23,7 @@ struct CampaignGateView: View {
                             }
                         }
                         InfoRow(label: "Visible campaigns", value: "\(gate.visibleCampaignCount)")
-                        InfoRow(label: "Qualified creators", value: "\(gate.selectedFeederCount)")
+                        InfoRow(label: "Verified source routes", value: "\(gate.selectedFeederCount)")
                         InfoRow(label: "Started", value: gate.startedAt)
                         InfoRow(label: "Finished", value: gate.finishedAt ?? "")
                         Divider()
@@ -66,6 +66,40 @@ struct CampaignGateView: View {
                                         .foregroundStyle(.secondary)
                                         .lineLimit(5)
                                         .textSelection(.enabled)
+                                }
+                            }
+                            .padding(12)
+                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }
+                .padding(16)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Active Projects")
+                        .font(.headline)
+                    if store.campaignProjects.isEmpty {
+                        Text("Source-backed campaigns have not loaded yet.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(store.campaignProjects) { project in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text(project.name)
+                                        .font(.headline)
+                                    Spacer()
+                                    StatusPill(text: displayUserStatus(project.status))
+                                }
+                                InfoRow(label: "Approved", value: "\(project.approvedCount)/\(project.reviewTargetCount)")
+                                InfoRow(label: "Source ready", value: "\(project.sourceReadyCount)")
+                                if project.watermarkRequired {
+                                    InfoRow(label: "Watermark", value: project.watermarkReady ? "Installed" : "Needed")
+                                }
+                                if !project.blocker.isEmpty {
+                                    Text(project.blocker)
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
                                 }
                             }
                             .padding(12)

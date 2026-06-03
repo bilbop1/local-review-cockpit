@@ -33,7 +33,7 @@ struct ContentView: View {
                         .accessibilityIdentifier("toolbar-render-feeders")
 
                         Button {
-                            Task { await store.refreshAll() }
+                            Task { await store.refreshForSection(selectedSection) }
                         } label: {
                             Label("Refresh", systemImage: "arrow.clockwise")
                         }
@@ -58,6 +58,11 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .selectOperationsSection)) { notification in
             if let sectionID = notification.object as? String, AppSection(rawValue: sectionID) != nil {
                 selectedSectionID = sectionID
+            }
+        }
+        .onChange(of: selectedSectionID) { _, newValue in
+            if AppSection(rawValue: newValue) == .reviewKits {
+                Task { await store.refreshReviewSurface() }
             }
         }
     }

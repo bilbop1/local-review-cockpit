@@ -213,6 +213,86 @@ struct CampaignEvidence: Codable, Identifiable {
     }
 }
 
+struct CampaignProject: Codable, Identifiable, Hashable {
+    var id: String { slug }
+    var slug: String
+    var name: String
+    var campaignURL: String
+    var requirementsURL: String
+    var sourceStrategy: String
+    var reviewTargetCount: Int
+    var clipCount: Int
+    var sourceReadyCount: Int
+    var metadataOnlyCount: Int
+    var renderedCount: Int
+    var approvedCount: Int
+    var needsReviewCount: Int
+    var status: String
+    var sourceReady: Bool
+    var rulesStored: Bool
+    var watermarkRequired: Bool
+    var watermarkReady: Bool
+    var watermarkURL: String
+    var watermarkAssetPath: String
+    var blocker: String
+    var blockers: [String]
+    var nextAction: String
+
+    enum CodingKeys: String, CodingKey {
+        case slug
+        case name
+        case campaignURL = "campaign_url"
+        case requirementsURL = "requirements_url"
+        case sourceStrategy = "source_strategy"
+        case reviewTargetCount = "review_target_count"
+        case clipCount = "clip_count"
+        case sourceReadyCount = "source_ready_count"
+        case metadataOnlyCount = "metadata_only_count"
+        case renderedCount = "rendered_count"
+        case approvedCount = "approved_count"
+        case needsReviewCount = "needs_review_count"
+        case status
+        case sourceReady = "source_ready"
+        case rulesStored = "rules_stored"
+        case watermarkRequired = "watermark_required"
+        case watermarkReady = "watermark_ready"
+        case watermarkURL = "watermark_url"
+        case watermarkAssetPath = "watermark_asset_path"
+        case blocker
+        case blockers
+        case nextAction = "next_action"
+    }
+}
+
+extension CampaignProject {
+    static func placeholder(slug: String, name: String) -> CampaignProject {
+        CampaignProject(
+            slug: slug,
+            name: name,
+            campaignURL: "",
+            requirementsURL: "",
+            sourceStrategy: "",
+            reviewTargetCount: 5,
+            clipCount: 0,
+            sourceReadyCount: 0,
+            metadataOnlyCount: 0,
+            renderedCount: 0,
+            approvedCount: 0,
+            needsReviewCount: 0,
+            status: "queued",
+            sourceReady: false,
+            rulesStored: false,
+            watermarkRequired: false,
+            watermarkReady: true,
+            watermarkURL: "",
+            watermarkAssetPath: "",
+            blocker: "",
+            blockers: [],
+            nextAction: "Build Reviews"
+        )
+    }
+}
+
 struct SourceRoute: Codable, Identifiable {
     var id: String
     var platform: String
@@ -326,6 +406,7 @@ struct DiagnosticsExport: Codable {
 
 struct ClipCandidate: Codable, Identifiable {
     var id: String
+    var campaignSlug: String?
     var sourcePlatform: String
     var sourceURL: String
     var title: String
@@ -337,6 +418,7 @@ struct ClipCandidate: Codable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case campaignSlug = "campaign_slug"
         case sourcePlatform = "source_platform"
         case sourceURL = "source_url"
         case title
@@ -350,6 +432,7 @@ struct ClipCandidate: Codable, Identifiable {
 
 struct RenderNomination: Codable, Identifiable {
     var id: String
+    var campaignSlug: String?
     var nominationType: String
     var scoreReason: String
     var targetStyle: String
@@ -358,6 +441,7 @@ struct RenderNomination: Codable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case campaignSlug = "campaign_slug"
         case nominationType = "nomination_type"
         case scoreReason = "score_reason"
         case targetStyle = "target_style"
@@ -369,6 +453,11 @@ struct RenderNomination: Codable, Identifiable {
 struct RenderKit: Codable, Identifiable {
     var id: String
     var nominationID: String
+    var campaignSlug: String?
+    var campaignName: String?
+    var campaignURL: String?
+    var approvalRequiredForPackaging: Bool?
+    var campaignProofStatus: String?
     var title: String
     var reviewVideoPath: String
     var captionPath: String
@@ -390,6 +479,8 @@ struct RenderKit: Codable, Identifiable {
     var clipDiscoveredAt: String?
     var clipViewCount: Int?
     var clipDuration: Double?
+    var clipStartSeconds: Double?
+    var clipEndSeconds: Double?
 
     var isDemoKit: Bool { isDemo == 1 }
     var videoURL: URL? {
@@ -399,6 +490,11 @@ struct RenderKit: Codable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id
         case nominationID = "nomination_id"
+        case campaignSlug = "campaign_slug"
+        case campaignName = "campaign_name"
+        case campaignURL = "campaign_url"
+        case approvalRequiredForPackaging = "approval_required_for_packaging"
+        case campaignProofStatus = "campaign_proof_status"
         case title
         case reviewVideoPath = "review_video_path"
         case captionPath = "caption_path"
@@ -420,6 +516,8 @@ struct RenderKit: Codable, Identifiable {
         case clipDiscoveredAt = "clip_discovered_at"
         case clipViewCount = "clip_view_count"
         case clipDuration = "clip_duration"
+        case clipStartSeconds = "clip_start_seconds"
+        case clipEndSeconds = "clip_end_seconds"
     }
 }
 
@@ -427,6 +525,13 @@ struct JobRun: Codable, Identifiable {
     var id: String
     var name: String
     var kind: String
+    var intent: String
+    var campaignSlug: String
+    var requestedBy: String
+    var dedupeKey: String
+    var hermesProfile: String
+    var claimedBy: String
+    var heartbeatAt: String
     var status: String
     var stage: String
     var progress: Int
@@ -440,6 +545,13 @@ struct JobRun: Codable, Identifiable {
         case id
         case name
         case kind
+        case intent
+        case campaignSlug = "campaign_slug"
+        case requestedBy = "requested_by"
+        case dedupeKey = "dedupe_key"
+        case hermesProfile = "hermes_profile"
+        case claimedBy = "claimed_by"
+        case heartbeatAt = "heartbeat_at"
         case status
         case stage
         case progress
@@ -478,12 +590,46 @@ struct AgentsResponse: Codable {
     var schedules: [String]
     var hermesAvailable: Bool
     var gatewayRunning: Bool
+    var status: String
+    var selectedProfile: String
+    var detectedProfile: String
+    var authDegraded: Bool
+    var cronOK: Bool
+    var cronJobs: [String]
+    var latestExecutionProof: HermesExecutionProof
+    var normalPath: String
+    var fallbackPath: String
 
     enum CodingKeys: String, CodingKey {
         case profiles
         case schedules
         case hermesAvailable = "hermes_available"
         case gatewayRunning = "gateway_running"
+        case status
+        case selectedProfile = "selected_profile"
+        case detectedProfile = "detected_profile"
+        case authDegraded = "auth_degraded"
+        case cronOK = "cron_ok"
+        case cronJobs = "cron_jobs"
+        case latestExecutionProof = "latest_execution_proof"
+        case normalPath = "normal_path"
+        case fallbackPath = "fallback_path"
+    }
+}
+
+struct HermesExecutionProof: Codable {
+    var ok: Bool
+    var status: String
+    var detail: String
+    var jobID: String
+    var activeJobs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case status
+        case detail
+        case jobID = "job_id"
+        case activeJobs = "active_jobs"
     }
 }
 

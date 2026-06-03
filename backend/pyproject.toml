@@ -1,0 +1,14 @@
+[project]
+name = "clipping-ops-backend"
+version = "0.1.0"
+description = "Local control API and media workers for Clipping Ops Cockpit"
+requires-python = ">=3.10"
+dependencies = [
+  "faster-whisper>=1.2.1",
+  "pillow>=10.0",
+  "pyautogui>=0.9.54",
+  "yt-dlp>=2026.1.29",
+]
+
+[tool.uv]
+package = false

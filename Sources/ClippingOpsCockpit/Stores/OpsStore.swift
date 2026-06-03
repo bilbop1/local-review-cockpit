@@ -9,6 +9,7 @@ final class OpsStore: ObservableObject {
     @Published var nominations: [RenderNomination] = []
     @Published var renderQueue: [JobRun] = []
     @Published var reviewKits: [RenderKit] = []
+    @Published var campaignProjects: [CampaignProject] = []
     @Published var campaignEvidence: [CampaignEvidence] = []
     @Published var platformState: PlatformState?
     @Published var readiness: ReadinessReport?
@@ -21,6 +22,27 @@ final class OpsStore: ObservableObject {
 
     private let client = BackendClient()
 
+    private func queueHermesJob(intent: String, campaignSlug: String = "", payload: [String: Any] = [:], success: String) async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            var body: [String: Any] = [
+                "intent": intent,
+                "requested_by": "gui",
+                "payload": payload
+            ]
+            if !campaignSlug.isEmpty {
+                body["campaign_slug"] = campaignSlug
+            }
+            let job: JobRun = try await client.post("jobs", body: EncodableBody(value: body))
+            let owner = job.hermesProfile.isEmpty ? "Hermes" : "Hermes \(job.hermesProfile)"
+            lastActionMessage = "\(success) \(owner) job \(job.status == "queued" ? "queued" : job.status)."
+            await refreshAll()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
     func refreshAll() async {
         isLoading = true
         defer { isLoading = false }
@@ -32,6 +54,7 @@ final class OpsStore: ObservableObject {
             async let nominations: [RenderNomination] = client.get("nominations")
             async let queue: [JobRun] = client.get("render-queue")
             async let kits: [RenderKit] = client.get("review-kits")
+            async let projects: [CampaignProject] = client.get("campaign-projects")
             async let evidence: [CampaignEvidence] = client.get("campaign-evidence")
             async let platformState: PlatformState = client.get("platforms")
             async let readiness: ReadinessReport = client.get("readiness")
@@ -46,6 +69,7 @@ final class OpsStore: ObservableObject {
             self.nominations = try await nominations
             self.renderQueue = try await queue
             self.reviewKits = try await kits
+            self.campaignProjects = try await projects
             self.campaignEvidence = try await evidence
             self.platformState = try await platformState
             self.readiness = try await readiness
@@ -55,6 +79,29 @@ final class OpsStore: ObservableObject {
             lastError = nil
         } catch {
             lastError = error.localizedDescription
+        }
+    }
+
+    func refreshReviewSurface() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            async let kits: [RenderKit] = client.get("review-kits", timeout: 8)
+            async let projects: [CampaignProject] = client.get("campaign-projects", timeout: 8)
+            self.reviewKits = try await kits
+            self.campaignProjects = try await projects
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func refreshForSection(_ section: AppSection) async {
+        switch section {
+        case .reviewKits:
+            await refreshReviewSurface()
+        default:
+            await refreshAll()
         }
     }
 
@@ -75,62 +122,83 @@ final class OpsStore: ObservableObject {
     }
 
     func runCampaignGate() async {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            let gate: CampaignGate = try await client.post("campaign-gate/run")
-            campaignGate = gate
-            lastActionMessage = gate.blocker
-            await refreshAll()
-        } catch {
-            lastError = error.localizedDescription
-        }
+        await queueHermesJob(intent: "refresh_campaigns", success: "Refresh Campaigns")
     }
 
     func runPlatformSmoke(twitchLogin: String, kickSlug: String) async {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            if !twitchLogin.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let _: GenericJSONResponse = try await client.get("platforms/twitch/smoke?login=\(twitchLogin.urlQueryEscaped)")
-            }
-            if !kickSlug.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let _: GenericJSONResponse = try await client.get("platforms/kick/smoke?slug=\(kickSlug.urlQueryEscaped)")
-            }
-            lastActionMessage = "Platform smoke check recorded."
-            await refreshAll()
-        } catch {
-            lastError = error.localizedDescription
-        }
+        await queueHermesJob(
+            intent: "platform_smoke",
+            payload: [
+                "twitch_login": twitchLogin.trimmingCharacters(in: .whitespacesAndNewlines),
+                "kick_slug": kickSlug.trimmingCharacters(in: .whitespacesAndNewlines)
+            ],
+            success: "Platform check"
+        )
     }
 
     func runSelectedFeederSweep() async {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            let _: GenericJSONResponse = try await client.get("sweeps/selected-feeders")
-            lastActionMessage = "Creator check recorded for YourRAGE and Lacy."
-            await refreshAll()
-        } catch {
-            lastError = error.localizedDescription
-        }
+        await queueHermesJob(intent: "selected_feeder_sweep", success: "Creator check")
     }
 
     func renderSelectedFeederKits() async {
         isLoading = true
         defer { isLoading = false }
         do {
-            let response: DemoRenderResponse = try await client.post(
-                "render/selected-feeders",
-                body: EncodableBody(value: ["limit": 2, "style": "selected_feeder_final_v1"])
-            )
-            lastActionMessage = response.status == "succeeded"
-                ? "Built \(response.created.count) latest review kit(s)."
-                : (response.blocker ?? "Latest review build did not complete.")
+            let activeProjects = campaignProjects.filter { project in
+                project.sourceReady || project.renderedCount > 0 || project.needsReviewCount > 0
+            }
+            let projects = activeProjects.isEmpty
+                ? [
+                    CampaignProject.placeholder(slug: "yourrage", name: "YourRAGE")
+                ]
+                : activeProjects
+            var queued = 0
+            for project in projects {
+                let _: JobRun = try await client.post(
+                    "jobs",
+                    body: EncodableBody(
+                        value: [
+                            "intent": "build_campaign_reviews",
+                            "campaign_slug": project.slug,
+                            "requested_by": "gui",
+                            "payload": ["limit": 5, "style": "campaign_short_final_v1", "campaign_slug": project.slug]
+                        ]
+                    )
+                )
+                queued += 1
+            }
+            lastActionMessage = "Queued \(queued) campaign review job(s) for Hermes."
             await refreshAll()
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    func refreshCampaignProject(_ project: CampaignProject) async {
+        await queueHermesJob(
+            intent: "refresh_campaign_project",
+            campaignSlug: project.slug,
+            payload: ["campaign_slug": project.slug],
+            success: "\(project.name) brief refresh"
+        )
+    }
+
+    func discoverCampaignSources(_ project: CampaignProject) async {
+        await queueHermesJob(
+            intent: "discover_campaign_sources",
+            campaignSlug: project.slug,
+            payload: ["campaign_slug": project.slug],
+            success: "\(project.name) source discovery"
+        )
+    }
+
+    func buildCampaignReviews(_ project: CampaignProject) async {
+        await queueHermesJob(
+            intent: "build_campaign_reviews",
+            campaignSlug: project.slug,
+            payload: ["limit": 5, "style": "campaign_short_final_v1", "campaign_slug": project.slug],
+            success: "\(project.name) review build"
+        )
     }
 
     func approve(kit: RenderKit) async {

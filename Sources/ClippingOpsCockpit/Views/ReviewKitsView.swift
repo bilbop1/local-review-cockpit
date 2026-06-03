@@ -8,6 +8,7 @@ struct ReviewKitsView: View {
     @State private var rejectionNotes = ""
     @State private var filter = ReviewKitFilter.needsReview
     @State private var sort = ReviewKitSort.rendered
+    @State private var campaignFilter = "all"
     @State private var searchText = ""
     @FocusState private var rejectionNotesFocused: Bool
 
@@ -16,9 +17,13 @@ struct ReviewKitsView: View {
         return store.reviewKits
             .filter { filter.matches($0) }
             .filter { kit in
+                campaignFilter == "all" || (kit.campaignSlug ?? "") == campaignFilter
+            }
+            .filter { kit in
                 guard !query.isEmpty else { return true }
                 return [
                     kit.title,
+                    kit.campaignName ?? "",
                     displayUserStatus(kit.reviewStatus),
                     kit.clipSourcePlatform ?? "",
                     kit.clipSourceURL ?? ""
@@ -46,6 +51,10 @@ struct ReviewKitsView: View {
         }
         .searchable(text: $searchText, placement: .toolbar, prompt: "Search reviews")
         .onAppear {
+            keepSelectionValid()
+        }
+        .task {
+            await store.refreshReviewSurface()
             keepSelectionValid()
         }
         .onChange(of: selectedKitID) { _, _ in
@@ -95,6 +104,15 @@ struct ReviewKitsView: View {
             .pickerStyle(.segmented)
             .accessibilityIdentifier("review-kit-filter")
 
+            Picker("Campaign", selection: $campaignFilter) {
+                Text("All Campaigns").tag("all")
+                ForEach(store.campaignProjects) { project in
+                    Text(project.name).tag(project.slug)
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("review-kit-campaign-filter")
+
             HStack {
                 Label("\(visibleKits.count) shown", systemImage: "rectangle.stack")
                     .font(.caption)
@@ -138,6 +156,9 @@ struct ReviewKitsView: View {
                     .font(.title2.weight(.semibold))
                     .lineLimit(2)
                 HStack(spacing: 12) {
+                    if let campaign = kit.campaignName, !campaign.isEmpty {
+                        Label(campaign, systemImage: "rectangle.3.group")
+                    }
                     Label("Rendered \(displayDateTime(kit.renderedAt ?? kit.createdAt))", systemImage: "wand.and.stars")
                     Label("Clip \(displayDateTime(kit.clipCreatedAt ?? kit.clipDiscoveredAt))", systemImage: "clock")
                 }
@@ -178,6 +199,7 @@ struct ReviewKitsView: View {
     private func videoPanel(kit: RenderKit) -> some View {
         if let url = kit.videoURL {
             ReviewVideoPanel(kitID: kit.id, url: url, path: kit.reviewVideoPath)
+                .id(kit.id)
         } else {
             VStack(spacing: 12) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -255,6 +277,7 @@ struct ReviewKitsView: View {
                 InfoRow(label: "Broadcast", value: displayDateTime(kit.clipCreatedAt ?? kit.clipDiscoveredAt))
                 InfoRow(label: "Kit created", value: displayDateTime(kit.createdAt))
                 InfoRow(label: "Rendered", value: displayDateTime(kit.renderedAt ?? kit.createdAt))
+                InfoRow(label: "Campaign", value: kit.campaignName ?? "Not linked")
                 InfoRow(label: "Views", value: formatCount(kit.clipViewCount))
                 InfoRow(label: "Duration", value: formatDuration(kit.clipDuration))
                 InfoRow(label: "Platform", value: displayStatus(kit.clipSourcePlatform ?? "Unknown"))
@@ -277,6 +300,17 @@ struct ReviewKitsView: View {
 
             if !kit.approvedAt.isEmpty {
                 InfoRow(label: "Approved", value: displayDateTime(kit.approvedAt))
+            }
+            if let campaignURL = kit.campaignURL, let url = URL(string: campaignURL) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Campaign")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 150, alignment: .leading)
+                    Link("Open campaign brief", destination: url)
+                        .font(.callout)
+                    Spacer(minLength: 0)
+                }
             }
         }
         .padding(16)
@@ -434,6 +468,9 @@ private struct ReviewKitRow: View {
             .foregroundStyle(.secondary)
 
             HStack(spacing: 10) {
+                if let campaign = kit.campaignName, !campaign.isEmpty {
+                    Label(campaign, systemImage: "rectangle.3.group")
+                }
                 if let platform = kit.clipSourcePlatform, !platform.isEmpty {
                     Label(displayStatus(platform), systemImage: platform.lowercased() == "twitch" ? "play.tv" : "bolt.circle")
                 }
@@ -453,45 +490,96 @@ private struct ReviewVideoPanel: View {
     var path: String
 
     @State private var playerReady = false
+    @State private var platformOverlay: PlatformUIOverlay = .none
     @State private var thumbnail: NSImage?
     @State private var thumbnailFailed = false
+    @StateObject private var playback = ReviewVideoPlaybackController()
 
     var body: some View {
-        ZStack {
-            CrashSafeVideoPreview(url: url, isReady: $playerReady)
+        VStack(alignment: .leading, spacing: 10) {
+            overlayControls
 
-            if !playerReady {
-                thumbnailBackground
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .controlSize(.large)
-                    Text(thumbnailFailed ? "Starting Preview" : "Preparing Preview")
-                        .font(.headline)
+            PortraitReviewPreviewStage {
+                ZStack {
+                    CrashSafeVideoPreview(url: url, isReady: $playerReady, playback: playback)
+
+                    if !playerReady {
+                        thumbnailBackground
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .controlSize(.large)
+                            Text(thumbnailFailed ? "Starting Preview" : "Preparing Preview")
+                                .font(.headline)
+                        }
+                        .foregroundStyle(.white)
+                        .padding(28)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.black.opacity(0.22))
+                    }
+
+                    SocialPlatformChromeOverlay(platform: platformOverlay)
+                        .accessibilityIdentifier("review-kit-platform-overlay-\(platformOverlay.rawValue)")
+
+                    if playerReady && platformOverlay == .none {
+                        StatusPill(
+                            text: playback.isPlaying ? "autoplaying" : "paused",
+                            systemImage: playback.isPlaying ? "play.circle" : "pause.circle"
+                        )
+                            .padding(12)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    }
                 }
-                .foregroundStyle(.white)
-                .padding(28)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.black.opacity(0.22))
-            } else {
-                StatusPill(text: "autoplaying", systemImage: "play.circle")
-                    .padding(12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .id(kitID)
             }
+
+            ReviewPlaybackControls(playback: playback)
+                .accessibilityIdentifier("review-kit-playback-controls")
         }
-        .id(kitID)
-        .frame(minHeight: 520)
-        .background(.black, in: RoundedRectangle(cornerRadius: 8))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
         .onChange(of: kitID) { _, _ in
             playerReady = false
             thumbnail = nil
             thumbnailFailed = false
         }
-        .onDisappear { playerReady = false }
+        .onDisappear {
+            playerReady = false
+            playback.detach()
+        }
         .task(id: kitID) {
             await loadThumbnail()
         }
         .accessibilityIdentifier("review-kit-video-autoplay")
+    }
+
+    private var overlayControls: some View {
+        HStack(spacing: 10) {
+            Label("Platform UI", systemImage: "rectangle.on.rectangle")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            Picker("Platform UI", selection: $platformOverlay) {
+                ForEach(PlatformUIOverlay.allCases) { overlay in
+                    Text(overlay.shortTitle).tag(overlay)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 210)
+            .accessibilityIdentifier("review-kit-platform-overlay-picker")
+
+            Text(platformOverlay.title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            Spacer()
+
+            if platformOverlay != .none {
+                Label("Preview only", systemImage: "eye")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 2)
     }
 
     @ViewBuilder
@@ -521,6 +609,120 @@ private struct ReviewVideoPanel: View {
         } catch {
             thumbnailFailed = true
         }
+    }
+}
+
+private struct ReviewPlaybackControls: View {
+    @ObservedObject var playback: ReviewVideoPlaybackController
+    @State private var scrubValue = 0.0
+    @State private var isScrubbing = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button {
+                playback.restart()
+            } label: {
+                Label("Start", systemImage: "backward.end.fill")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Restart preview")
+            .accessibilityLabel("Restart preview")
+            .accessibilityIdentifier("review-kit-playback-restart")
+
+            Button {
+                playback.skip(-5)
+            } label: {
+                Label("5s", systemImage: "gobackward.5")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Back 5 seconds")
+            .accessibilityLabel("Back 5 seconds")
+            .accessibilityIdentifier("review-kit-playback-back")
+
+            Button {
+                playback.togglePlayback()
+            } label: {
+                Label(playback.isPlaying ? "Pause" : "Play", systemImage: playback.isPlaying ? "pause.fill" : "play.fill")
+                    .frame(minWidth: 74)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .help(playback.isPlaying ? "Pause preview" : "Play preview")
+            .accessibilityLabel(playback.isPlaying ? "Pause preview" : "Play preview")
+            .accessibilityIdentifier("review-kit-playback-toggle")
+
+            Button {
+                playback.skip(5)
+            } label: {
+                Label("5s", systemImage: "goforward.5")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Forward 5 seconds")
+            .accessibilityLabel("Forward 5 seconds")
+            .accessibilityIdentifier("review-kit-playback-forward")
+
+            Text(timecode(isScrubbing ? scrubValue : playback.currentTime))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .trailing)
+
+            Slider(
+                value: Binding(
+                    get: { isScrubbing ? scrubValue : playback.currentTime },
+                    set: { scrubValue = $0 }
+                ),
+                in: playback.progressRange,
+                onEditingChanged: { editing in
+                    if editing {
+                        isScrubbing = true
+                        scrubValue = playback.currentTime
+                    } else {
+                        playback.seek(to: scrubValue)
+                        isScrubbing = false
+                    }
+                }
+            )
+            .disabled(playback.duration <= 0)
+            .accessibilityLabel("Preview scrubber")
+            .accessibilityIdentifier("review-kit-playback-scrubber")
+
+            Text(timecode(playback.duration))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .leading)
+
+            Button {
+                playback.toggleMuted()
+            } label: {
+                Image(systemName: playback.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .frame(width: 22)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help(playback.isMuted ? "Unmute preview" : "Mute preview")
+            .accessibilityLabel(playback.isMuted ? "Unmute preview" : "Mute preview")
+            .accessibilityIdentifier("review-kit-playback-mute")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .onAppear {
+            scrubValue = playback.currentTime
+        }
+        .onChange(of: playback.currentTime) { _, value in
+            if !isScrubbing {
+                scrubValue = value
+            }
+        }
+    }
+
+    private func timecode(_ seconds: Double) -> String {
+        guard seconds.isFinite && seconds > 0 else { return "0:00" }
+        let rounded = Int(seconds.rounded())
+        return "\(rounded / 60):\(String(format: "%02d", rounded % 60))"
     }
 }
 

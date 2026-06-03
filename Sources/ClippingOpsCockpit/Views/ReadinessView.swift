@@ -84,7 +84,8 @@ struct ReadinessView: View {
         [
             MilestonePresentation(id: "internal_local_ready", title: "Internal Local"),
             MilestonePresentation(id: "buddy_no_key_ready", title: "Buddy No-Key"),
-            MilestonePresentation(id: "customer_ship_ready", title: "Customer Ship")
+            MilestonePresentation(id: "codex_handoff_ready", title: "Codex Handoff"),
+            MilestonePresentation(id: "customer_ship_ready", title: "Prebuilt Mac App")
         ]
     }
 }

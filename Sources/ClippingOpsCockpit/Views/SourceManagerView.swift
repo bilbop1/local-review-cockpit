@@ -72,7 +72,7 @@ struct SourceManagerView: View {
             }
             .font(.callout)
 
-            Text("Twitch is the active review source. Kick remains monitor-only until clip capture is proven.")
+            Text("Campaign sources drive review builds. Twitch and Kick checks stay here for future creator campaigns; Kick remains monitor-only until clip capture is proven.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
