@@ -28,6 +28,7 @@ from clipping_ops_backend.caption_style import (
     CAPTION_MAX_WORDS_PER_LINE,
     CAPTION_TARGET_MAX_LINE_CHARS,
     CAPTION_MAX_CENTER_Y,
+    FONT_DIR,
     apply_caption_audio_sync_delay,
     caption_variant_for_key,
     caption_center_y_for_source,
@@ -134,6 +135,20 @@ def is_mobile_portrait_source(media_path: Path) -> bool:
 
 def font(size: int):
     return caption_font(size)
+
+
+def top_hook_font(size: int) -> ImageFont.ImageFont:
+    for candidate in [
+        FONT_DIR / "TikTokSans36pt-ExtraBold.ttf",
+        FONT_DIR / "TikTokSans36pt-Black.ttf",
+        Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+    ]:
+        if candidate.exists():
+            try:
+                return ImageFont.truetype(str(candidate), size=size)
+            except OSError:
+                continue
+    return font(size)
 
 
 def text_size(draw: ImageDraw.ImageDraw, text: str, style_font: ImageFont.ImageFont, stroke_width: int = 0) -> tuple[int, int]:
@@ -796,6 +811,34 @@ def _wrapped_lines(draw: ImageDraw.ImageDraw, text: str, style_font: ImageFont.I
     return [line for line in lines if line]
 
 
+def _balanced_top_hook_lines(draw: ImageDraw.ImageDraw, text: str, style_font: ImageFont.ImageFont, max_width: int) -> List[str]:
+    words = text.split()
+    if len(words) <= 4 and text_size(draw, text, style_font)[0] <= max_width:
+        return [text]
+    best: tuple[float, List[str]] | None = None
+    for split in range(1, len(words)):
+        lines = [" ".join(words[:split]), " ".join(words[split:])]
+        widths = [text_size(draw, line, style_font)[0] for line in lines]
+        if any(width > max_width for width in widths):
+            continue
+        word_balance_penalty = abs(split - (len(words) - split)) * 18
+        score = abs(widths[0] - widths[1]) + word_balance_penalty
+        if best is None or score < best[0]:
+            best = (score, lines)
+    if best is not None:
+        return best[1]
+    return _wrapped_lines(draw, text, style_font, max_width, max_lines=2)
+
+
+def _reference_top_hook_lines(draw: ImageDraw.ImageDraw, text: str, style_font: ImageFont.ImageFont, max_width: int) -> List[str]:
+    greedy = _wrapped_lines(draw, text, style_font, max_width, max_lines=2)
+    if len(greedy) == 2:
+        widths = [text_size(draw, line, style_font)[0] for line in greedy]
+        if min(widths) / max(1, max(widths)) >= 0.55:
+            return greedy
+    return _balanced_top_hook_lines(draw, text, style_font, max_width)
+
+
 def headline_card(path: Path, title: str, handle: str, transcript_text: str = "", clip_id: str = "", *, show: bool = True) -> str:
     image = Image.new("RGBA", (1080, 1920), (0, 0, 0, 0))
     if not show:
@@ -803,25 +846,35 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         return ""
     draw = ImageDraw.Draw(image, "RGBA")
     hook = viewer_hook(title, handle, transcript_text=transcript_text, clip_id=clip_id)
-    title_font = font(37 if len(hook) > 74 else 41)
-    lines = _wrapped_lines(draw, hook, title_font, 850, max_lines=2)
+    title_font = top_hook_font(40 if len(hook) > 78 else 42)
+    card_left = 60
+    card_top = 336
+    card_width = 920
+    text_left = card_left + 27
+    text_max_width = 690
+    lines = _reference_top_hook_lines(draw, hook, title_font, text_max_width)
     if not lines:
         image.save(path)
         return ""
     line_heights = [text_size(draw, line, title_font)[1] for line in lines]
-    line_widths = [text_size(draw, line, title_font)[0] for line in lines]
-    gap = 11
-    pad_x = 28
-    pad_y = 19
-    card_width = min(930, max(line_widths) + pad_x * 2)
-    card_height = sum(line_heights) + max(0, len(lines) - 1) * gap + pad_y * 2
-    left = (1080 - card_width) // 2
-    top = 104
-    draw.rounded_rectangle((left + 5, top + 6, left + card_width + 5, top + card_height + 6), radius=16, fill=(0, 0, 0, 54))
-    draw.rounded_rectangle((left, top, left + card_width, top + card_height), radius=15, fill=(255, 255, 255, 248))
-    y = top + pad_y
-    for line, line_width, line_height in zip(lines, line_widths, line_heights):
-        draw_text_visual_top(draw, line, (1080 - line_width) // 2, y, title_font, (10, 10, 10, 255))
+    gap = 8
+    pad_top = 20
+    pad_bottom = 24
+    content_height = sum(line_heights) + max(0, len(lines) - 1) * gap
+    card_height = max(148 if len(lines) > 1 else 104, content_height + pad_top + pad_bottom)
+    draw.rounded_rectangle(
+        (card_left + 3, card_top + 4, card_left + card_width + 3, card_top + card_height + 4),
+        radius=10,
+        fill=(0, 0, 0, 32),
+    )
+    draw.rounded_rectangle(
+        (card_left, card_top, card_left + card_width, card_top + card_height),
+        radius=9,
+        fill=(255, 255, 255, 250),
+    )
+    y = card_top + pad_top
+    for line, line_height in zip(lines, line_heights):
+        draw_text_visual_top(draw, line, text_left, y, title_font, (7, 7, 7, 255))
         y += line_height + gap
     image.save(path)
     return hook

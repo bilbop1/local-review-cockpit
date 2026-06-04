@@ -260,6 +260,7 @@ Current renderer rules:
 - Output size: 1080x1920.
 - Campaign final renders must include a persistent top summary hook card plus burned-in subtitles.
 - The top hook should create context and tension without spoiling the payoff, matching the TikTok reference direction from `https://www.tiktok.com/t/ZTBDvvEfD/`.
+- The top hook card should visually match the reference: white rounded rectangle around x=60, y=336, width about 920 on a 1080x1920 render; left-aligned black TikTok Sans ExtraBold text; minimal shadow; no app-like centered pill.
 - No internal labels in frames.
 - No “selected feeder,” “proof,” “review kit,” “demo,” or “review-safe” text in rendered video.
 - Maximum 2 words on screen per caption beat.

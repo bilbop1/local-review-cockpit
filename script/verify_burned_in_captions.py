@@ -212,12 +212,19 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
     if not bbox:
         return {"required": True, "ok": False, "reason": "title_card.png has no visible pixels"}
     left, top, right, bottom = bbox
-    if top < 70 or bottom > 330:
+    width = right - left
+    height = bottom - top
+    if top < 300 or top > 380 or bottom < 420 or bottom > 560 or width < 800 or width > 980:
         return {
             "required": True,
             "ok": False,
-            "reason": f"top hook bbox y={top}-{bottom} is outside upper safe hook band 70-330",
+            "reason": (
+                f"top hook bbox {left},{top},{right},{bottom} does not match reference band "
+                "x width 800-980, y top 300-380, y bottom 420-560"
+            ),
             "bbox": [left, top, right, bottom],
+            "width": width,
+            "height": height,
         }
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     frame = OUT_DIR / f"{kit_dir.name}-top-hook.jpg"
