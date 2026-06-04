@@ -620,6 +620,18 @@ HOOK_OVERRIDES = {
     "clip_aaad914f4538": "Lacy heard Savage CRASHED in last place",
     "clip_a1e493aa552b": "Lacy watched them climb before security came",
     "clip_42cbaa5686b0": "Lacy realized he's HIM mid-clip",
+    "clip_82ec1decd290": "YourRAGE locked onto one messy detail on stream",
+    "clip_3b0737d91f70": "Jason's chat caught one word that sounded dangerous",
+    "clip_0b33758d13dd": "Jason tried explaining why the rumors were fake",
+    "clip_b200319459a7": "Jason's stream turned chaotic when everyone started panicking",
+    "clip_9ab0d5a77ced": "Emily's comeback story somehow turned into free Chipotle",
+    "clip_e31cf9a9ec51": "Max got Lucki talking about turning thirty",
+    "clip_76572c1f77a8": "Max showed the haircut chat would not stop roasting",
+    "clip_58fa65245afb": "Max realized the song already had his stream in it",
+    "clip_5663dce40340": "YourRAGE tried dodging the Agent and Emily jokes",
+    "clip_c34ba7160d61": "YourRAGE imagined exactly how Agent would dance",
+    "clip_3c2685fa51d2": "Jason tested the windup and instantly paid for it",
+    "clip_114cbd99f552": "Jason had to explain the follower argument calmly",
 }
 
 MIN_CAPTION_BEAT_DURATION = 0.16
@@ -640,7 +652,7 @@ def weak_title(text: str) -> bool:
 
 def hook_from_transcript(transcript_text: str, handle: str) -> str:
     clean = " ".join(str(transcript_text).split())
-    name = handle.capitalize() if handle else "Streamer"
+    name = streamer_display_name(handle)
     if not clean:
         return f"{name} had the whole chat watching"
     first = re.split(r"(?<=[.!?])\s+", clean)[0].strip()
@@ -651,10 +663,92 @@ def hook_from_transcript(transcript_text: str, handle: str) -> str:
     return _emphasize_hook_words(f"{name} said: {excerpt}")
 
 
+def streamer_display_name(handle: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]", "", str(handle or "").lower())
+    names = {
+        "yourrage": "YourRAGE",
+        "yourragegaming": "YourRAGE",
+        "plaqueboymax": "Max",
+        "jasontheween": "Jason",
+        "lacy": "Lacy",
+    }
+    if normalized in names:
+        return names[normalized]
+    clean = str(handle or "").strip().lstrip("@")
+    return clean[:1].upper() + clean[1:] if clean else "Streamer"
+
+
+def _strip_hook_prefixes(text: str, handle: str) -> str:
+    clean = " ".join(str(text).split())
+    clean = clean.replace(" - Feeder Proof", "")
+    clean = clean.replace("Selected Feeder Review -", "")
+    clean = re.sub(r"\b(?:selected feeder|feeder proof|evidence review|review kit|proof|demo)\b", "", clean, flags=re.IGNORECASE)
+    speaker_names = {
+        streamer_display_name(handle),
+        handle,
+        "YourRAGE",
+        "PlaqueBoyMax",
+        "JasonTheWeen",
+        "Jason",
+        "Max",
+        "Lacy",
+    }
+    for name in sorted({item for item in speaker_names if item}, key=len, reverse=True):
+        clean = re.sub(rf"^\s*{re.escape(name)}\s*[:\-|]\s*", "", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"^[#@\s:\-|]+", "", clean)
+    return " ".join(clean.split()).strip(" \"'`")
+
+
+def _hook_words(text: str) -> List[str]:
+    return [word for word in re.split(r"\s+", str(text).strip()) if word]
+
+
+def _trim_hook(text: str, max_words: int = 14) -> str:
+    words = _hook_words(text)
+    if len(words) > max_words:
+        words = words[:max_words]
+    while words and re.sub(r"[^a-z0-9]", "", words[-1].lower()) in {"a", "an", "the", "to", "of", "and", "or", "but", "with"}:
+        words.pop()
+    trimmed = " ".join(words).strip(" ,;:-")
+    return trimmed[:1].upper() + trimmed[1:] if trimmed else ""
+
+
+def non_spoiler_summary_hook(title: str, handle: str, transcript_text: str = "") -> str:
+    name = streamer_display_name(handle)
+    clean = _strip_hook_prefixes(title, handle)
+    lowered = clean.lower()
+    haystack = f"{lowered}\n{str(transcript_text).lower()}"
+
+    if "green screen" in haystack or "greenscreen" in haystack:
+        if "silky" in haystack or "jason" in haystack:
+            return "Max got tired of Jason and Silky green screening his stream"
+        return f"{name} got tired of the green screen bit"
+    if "phone" in haystack or "text" in haystack or "call" in haystack:
+        return f"{name} shut down a phone call question on stream"
+    if "friend" in haystack:
+        return f"{name} got asked an awkward friendship question"
+    if "chicken" in haystack:
+        return f"{name} got stuck on a wild chicken comment"
+    if "mind" in haystack or "train" in haystack or "impress" in haystack:
+        return f"{name} found a wild brain training take"
+    if "argument" in haystack or "debate" in haystack:
+        return f"{name} turned a stream moment into a debate"
+    if "laugh" in haystack or "funny" in haystack:
+        return f"{name} could not hold it together on stream"
+    if weak_title(clean):
+        fallback = _strip_hook_prefixes(hook_from_transcript(transcript_text, handle), handle)
+        return _trim_hook(f"{name} had chat locked in over this moment" if weak_title(fallback) else fallback)
+
+    quote_like = re.match(r"^(?:i|i'm|im|you|your|what|why|how|if|bro|ray|chat|nah|no)\b", lowered)
+    if quote_like:
+        return _trim_hook(f"{name} had chat locked in over this moment")
+    return _trim_hook(clean)
+
+
 def viewer_hook(title: str, handle: str, transcript_text: str = "", clip_id: str = "") -> str:
     if clip_id in HOOK_OVERRIDES:
         return HOOK_OVERRIDES[clip_id]
-    clean = " ".join(str(title).replace(" - Feeder Proof", "").replace("Selected Feeder Review -", "").split())
+    clean = _strip_hook_prefixes(title, handle)
     lowered = clean.lower()
     if handle.lower() == "lacy":
         if "arrest" in lowered:
@@ -668,13 +762,16 @@ def viewer_hook(title: str, handle: str, transcript_text: str = "", clip_id: str
         if "handcuff" in lowered:
             return "Lacy got exposed by the HANDCUFFS"
     if "texting" in lowered and "seatbelt" in lowered:
-        name = handle.capitalize() if handle else "Streamer"
+        name = streamer_display_name(handle)
         return f"{name} was TEXTING and DRIVING without a SEATBELT"
     if weak_title(clean):
         return hook_from_transcript(transcript_text, handle)
     if not clean:
-        return f"{handle.capitalize() if handle else 'Streamer'} had the whole chat watching"
-    return _emphasize_hook_words(clean)
+        return f"{streamer_display_name(handle)} had the whole chat watching"
+    hook = _emphasize_hook_words(non_spoiler_summary_hook(clean, handle, transcript_text))
+    if len(re.findall(r"[a-z0-9]{2,}", hook.lower())) < 5:
+        return f"{streamer_display_name(handle)} had chat locked in over this moment"
+    return hook
 
 
 def _wrapped_lines(draw: ImageDraw.ImageDraw, text: str, style_font: ImageFont.ImageFont, max_width: int, max_lines: int = 3) -> List[str]:
@@ -706,16 +803,26 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         return ""
     draw = ImageDraw.Draw(image, "RGBA")
     hook = viewer_hook(title, handle, transcript_text=transcript_text, clip_id=clip_id)
-    title_font = font(39 if len(hook) > 72 else 43)
-    lines = _wrapped_lines(draw, hook, title_font, 870, max_lines=3)
-    y = 102
-    for line in lines:
-        width, height = text_size(draw, line, title_font)
-        left = (1080 - width) // 2 - 14
-        draw.rounded_rectangle((left + 4, y + 5, left + width + 32, y + height + 25), radius=6, fill=(0, 0, 0, 52))
-        draw.rounded_rectangle((left, y, left + width + 28, y + height + 20), radius=5, fill=(255, 255, 255, 250))
-        draw.text((left + 14, y + 7), line, font=title_font, fill=(8, 8, 8, 255))
-        y += height + 20
+    title_font = font(37 if len(hook) > 74 else 41)
+    lines = _wrapped_lines(draw, hook, title_font, 850, max_lines=2)
+    if not lines:
+        image.save(path)
+        return ""
+    line_heights = [text_size(draw, line, title_font)[1] for line in lines]
+    line_widths = [text_size(draw, line, title_font)[0] for line in lines]
+    gap = 11
+    pad_x = 28
+    pad_y = 19
+    card_width = min(930, max(line_widths) + pad_x * 2)
+    card_height = sum(line_heights) + max(0, len(lines) - 1) * gap + pad_y * 2
+    left = (1080 - card_width) // 2
+    top = 104
+    draw.rounded_rectangle((left + 5, top + 6, left + card_width + 5, top + card_height + 6), radius=16, fill=(0, 0, 0, 54))
+    draw.rounded_rectangle((left, top, left + card_width, top + card_height), radius=15, fill=(255, 255, 255, 248))
+    y = top + pad_y
+    for line, line_width, line_height in zip(lines, line_widths, line_heights):
+        draw_text_visual_top(draw, line, (1080 - line_width) // 2, y, title_font, (10, 10, 10, 255))
+        y += line_height + gap
     image.save(path)
     return hook
 
@@ -1244,7 +1351,7 @@ def render_review_video(
         handle,
         transcript_text=transcript_text,
         clip_id=clip_id,
-        show=not caption_only_profile,
+        show=True,
     )
     source_text = source_badge(
         source_badge_path,
@@ -1274,15 +1381,16 @@ def render_review_video(
         else standard_layout_filter()
     )
     caption_input_start = 3
+    title_overlay_enable = "" if caption_only_profile else ":enable='between(t,0,3.00)'"
     base = (
         f"{base_layout};"
-        "[base][1:v]overlay=0:0:format=auto:enable='between(t,0,3.00)'[title];"
+        f"[base][1:v]overlay=0:0:format=auto{title_overlay_enable}[title];"
         "[title][2:v]overlay=0:0:format=auto[v0]"
     )
     if watermark_overlay_path:
         base = (
             f"{base_layout};"
-            "[base][1:v]overlay=0:0:format=auto:enable='between(t,0,3.00)'[title];"
+            f"[base][1:v]overlay=0:0:format=auto{title_overlay_enable}[title];"
             "[title][2:v]overlay=0:0:format=auto[prewm];"
             "[prewm][3:v]overlay=0:0:format=auto[v0]"
         )
@@ -1332,9 +1440,11 @@ def render_review_video(
     if result.returncode != 0 or not review_video.exists():
         raise RuntimeError(result.stderr[-4000:] or "ffmpeg render failed")
     rendered_text = {
-        "layout": "caption_only" if caption_only_profile else "headline_caption",
+        "layout": "summary_hook_caption" if caption_only_profile else "headline_caption",
         "hook_card_visible": bool(hook_text),
         "hook_card": hook_text,
+        "hook_card_position": "top_safe_summary",
+        "hook_card_persistent": bool(caption_only_profile and hook_text),
         "source_badge_visible": bool(source_text),
         "source_badge": source_text,
         "caption_beats": [str(beat["text"]) for beat in beats],
@@ -1523,12 +1633,13 @@ def write_artifacts(
         render_text_manifest,
         {
             "profile": profile,
-            "caption_only": is_campaign_profile,
+            "caption_only": bool(is_campaign_profile and not rendered_text.get("hook_card_visible")),
             "rendered_text": rendered_text,
             "internal_tokens_blocked": list(INTERNAL_RENDER_TEXT_TOKENS),
             "style_reference": "https://www.youtube.com/@IShouldClip/shorts",
+            "reference_tiktok_hook": "https://www.tiktok.com/t/ZTBDvvEfD/",
             "notes": (
-                "Campaign final renders burn in subtitles only; other profiles may include viewer-facing hook/source/caption copy."
+                "Campaign final renders burn a viewer-facing top summary hook plus subtitles. Internal labels remain blocked."
                 if is_campaign_profile
                 else "Only viewer-facing hook/source/caption copy may be burned into the video."
             ),
@@ -1546,7 +1657,7 @@ def write_artifacts(
                 *( [f"Hook card: {rendered_text.get('hook_card', '')}"] if rendered_text.get("hook_card") else [] ),
                 *( [f"Source badge: {rendered_text.get('source_badge', '')}"] if rendered_text.get("source_badge") else [] ),
                 *( ["Suggested post caption: Lacy on stream. #lacy"] if is_lacy else [] ),
-                *( ["Burned-in text: subtitles only"] if is_campaign_profile else [] ),
+                *( ["Burned-in text: top summary hook plus subtitles"] if is_campaign_profile else [] ),
                 f"Caption standard: TikTok Sans Black, max {CAPTION_MAX_WORDS_PER_LINE} words per beat, target max {CAPTION_TARGET_MAX_LINE_CHARS} characters unless a single word is longer.",
                 "",
                 "Timed captions:",
@@ -1723,7 +1834,7 @@ def write_artifacts(
             if watermark_required and watermark_info
             else []
         ),
-        "- Burned-in internal labels: none; rendered copy is subtitles only." if is_campaign_profile else "- Burned-in internal labels: none; rendered copy is hook/source/caption only.",
+        "- Burned-in internal labels: none; rendered copy is a top summary hook plus subtitles." if is_campaign_profile else "- Burned-in internal labels: none; rendered copy is hook/source/caption only.",
     ]
     write_text(critique, "\n".join(critique_lines) + "\n")
 

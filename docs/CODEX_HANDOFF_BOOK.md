@@ -258,7 +258,8 @@ Current renderer rules:
 
 - Font: TikTok Sans 36pt Black.
 - Output size: 1080x1920.
-- Burned-in subtitles only for campaign final renders.
+- Campaign final renders must include a persistent top summary hook card plus burned-in subtitles.
+- The top hook should create context and tension without spoiling the payoff, matching the TikTok reference direction from `https://www.tiktok.com/t/ZTBDvvEfD/`.
 - No internal labels in frames.
 - No “selected feeder,” “proof,” “review kit,” “demo,” or “review-safe” text in rendered video.
 - Maximum 2 words on screen per caption beat.

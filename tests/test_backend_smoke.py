@@ -635,6 +635,41 @@ class BackendSmokeTests(unittest.TestCase):
         manifest.write_text(
             json.dumps(
                 {
+                    "profile": db.CAMPAIGN_SHORT_PROFILE,
+                    "caption_only": True,
+                    "rendered_text": {
+                        "layout": "caption_only",
+                        "hook_card_visible": False,
+                        "hook_card": "",
+                        "caption_beats": ["THIS IS", "WHAT YOU", "SUPPORTED", "WAIT FOR", "IT NOW"],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.assertTrue(any("top summary hook" in item for item in db._render_text_manifest_blockers(manifest)))
+
+        manifest.write_text(
+            json.dumps(
+                {
+                    "profile": db.CAMPAIGN_SHORT_PROFILE,
+                    "caption_only": False,
+                    "rendered_text": {
+                        "layout": "summary_hook_caption",
+                        "hook_card_visible": True,
+                        "hook_card": "Max got tired of Jason and Silky green screening his stream",
+                        "hook_card_persistent": True,
+                        "caption_beats": ["THIS IS", "WHAT YOU", "SUPPORTED", "WAIT FOR", "IT NOW"],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.assertEqual(db._render_text_manifest_blockers(manifest), [])
+
+        manifest.write_text(
+            json.dumps(
+                {
                     "caption_only": True,
                     "rendered_text": {
                         "layout": "caption_only",

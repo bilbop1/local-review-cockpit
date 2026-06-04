@@ -187,6 +187,68 @@ def caption_overlay_bounds(overlay_path: Path) -> Dict[str, Any]:
     }
 
 
+def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
+    manifest_path = kit_dir / "render_text_manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"required": True, "ok": False, "reason": f"render_text_manifest.json unreadable for top hook audit: {exc}"}
+    rendered = payload.get("rendered_text", {})
+    layout = str(rendered.get("layout", "") if isinstance(rendered, dict) else "").strip().lower()
+    profile = str(payload.get("profile", "")).strip()
+    required = profile == db.CAMPAIGN_SHORT_PROFILE or layout == "summary_hook_caption"
+    if not required:
+        return {"required": False, "ok": True}
+    if not isinstance(rendered, dict):
+        return {"required": True, "ok": False, "reason": "rendered_text is not an object"}
+    hook = str(rendered.get("hook_card", "")).strip()
+    if not hook or rendered.get("hook_card_visible") is not True:
+        return {"required": True, "ok": False, "reason": "campaign render has no visible top summary hook"}
+    title_card = kit_dir / "title_card.png"
+    if not title_card.exists():
+        return {"required": True, "ok": False, "reason": "title_card.png missing"}
+    alpha = Image.open(title_card).convert("RGBA").getchannel("A")
+    bbox = alpha.getbbox()
+    if not bbox:
+        return {"required": True, "ok": False, "reason": "title_card.png has no visible pixels"}
+    left, top, right, bottom = bbox
+    if top < 70 or bottom > 330:
+        return {
+            "required": True,
+            "ok": False,
+            "reason": f"top hook bbox y={top}-{bottom} is outside upper safe hook band 70-330",
+            "bbox": [left, top, right, bottom],
+        }
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    frame = OUT_DIR / f"{kit_dir.name}-top-hook.jpg"
+    result = run([
+        "ffmpeg",
+        "-hide_banner",
+        "-y",
+        "-ss",
+        "1.00",
+        "-i",
+        str(video),
+        "-frames:v",
+        "1",
+        "-update",
+        "1",
+        str(frame),
+    ])
+    if result.returncode != 0 or not frame.exists():
+        return {"required": True, "ok": False, "reason": result.stderr[-500:] or "top hook frame extraction failed"}
+    ratio = overlay_pixel_match_ratio(frame, title_card)
+    return {
+        "required": True,
+        "ok": ratio >= 0.20,
+        "hook": hook,
+        "overlay_pixel_match_ratio": round(ratio, 3),
+        "bbox": [left, top, right, bottom],
+        "frame": str(frame),
+        "overlay": str(title_card),
+    }
+
+
 def verify_kit(row: Dict[str, Any]) -> Dict[str, Any]:
     kit_dir = Path(str(row["review_video_path"])).parent
     video = kit_dir / "review.mp4"
@@ -234,6 +296,7 @@ def verify_kit(row: Dict[str, Any]) -> Dict[str, Any]:
         })
     ok_count = sum(1 for item in checks if item.get("ok"))
     required = min(3, len(checks))
+    hook_check = top_hook_check(kit_dir, video)
     return {
         "kit_id": row.get("id", ""),
         "title": row.get("title", ""),
@@ -243,7 +306,8 @@ def verify_kit(row: Dict[str, Any]) -> Dict[str, Any]:
         "text_violations": text_violations,
         "checked_caption_frames": len(checks),
         "ok_caption_frames": ok_count,
-        "ok": bool(required and ok_count >= required and not timing_violations and not text_violations),
+        "top_hook_check": hook_check,
+        "ok": bool(required and ok_count >= required and hook_check.get("ok") and not timing_violations and not text_violations),
         "checks": checks,
     }
 

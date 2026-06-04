@@ -1991,12 +1991,21 @@ def _render_text_manifest_blockers(path: Path) -> List[str]:
     caption_quality_violations = caption_text_quality_violations(caption_beats)
     if caption_quality_violations:
         blockers.append("caption text has broken ASR fragments: " + "; ".join(caption_quality_violations[:3]))
+    profile = str(payload.get("profile", "")).strip()
+    layout = str(rendered.get("layout", "") if isinstance(rendered, dict) else "").strip().lower()
+    hook_visible = bool(rendered.get("hook_card_visible")) if isinstance(rendered, dict) else False
     caption_only = bool(payload.get("caption_only")) or (
         isinstance(rendered, dict)
-        and str(rendered.get("layout", "")).strip().lower() == "caption_only"
+        and layout == "caption_only"
         and rendered.get("hook_card_visible") is False
     )
-    if caption_only:
+    is_campaign_final = profile == CAMPAIGN_SHORT_PROFILE or layout == "summary_hook_caption"
+    if is_campaign_final:
+        if caption_only or not hook_visible:
+            blockers.append("campaign final render requires a viewer-facing top summary hook card")
+        elif normalized_hook in WEAK_RENDERED_HOOKS or len(hook_words) < 5:
+            blockers.append("viewer hook card is too weak or shorthand for production proof")
+    elif caption_only:
         if len(caption_beats) < 3 or caption_word_count < 8:
             blockers.append("caption-only render has too few burned-in caption beats")
     elif normalized_hook in WEAK_RENDERED_HOOKS or len(hook_words) < 3:
