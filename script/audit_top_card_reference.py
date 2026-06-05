@@ -78,7 +78,9 @@ def measure_text_in_region(image: Image.Image, card: list[int], *, alpha_require
                     continue
             elif r > 245 and g > 245 and b > 245:
                 continue
-            if r < 112 and g < 112 and b < 112 and max(r, g, b) - min(r, g, b) < 64:
+            is_dark_text = r < 112 and g < 112 and b < 112 and max(r, g, b) - min(r, g, b) < 64
+            is_color_emoji = max(r, g, b) >= 120 and max(r, g, b) - min(r, g, b) >= 50
+            if is_dark_text or is_color_emoji:
                 text_points.append((x, y))
     text = bbox(text_points)
     if not text:
