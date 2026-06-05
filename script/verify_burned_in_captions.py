@@ -210,7 +210,17 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
         return {"required": True, "ok": False, "reason": "title_card.png missing"}
     title_image = Image.open(title_card).convert("RGBA")
     alpha = title_image.getchannel("A")
-    bbox = alpha.getbbox()
+    alpha_pixels = alpha.load()
+    solid_points: List[tuple[int, int]] = []
+    for y in range(title_image.height):
+        for x in range(title_image.width):
+            if alpha_pixels[x, y] >= 80:
+                solid_points.append((x, y))
+    bbox = None
+    if solid_points:
+        xs = [point[0] for point in solid_points]
+        ys = [point[1] for point in solid_points]
+        bbox = (min(xs), min(ys), max(xs) + 1, max(ys) + 1)
     if not bbox:
         return {"required": True, "ok": False, "reason": "title_card.png has no visible pixels"}
     left, top, right, bottom = bbox

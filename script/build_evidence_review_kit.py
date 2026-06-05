@@ -990,22 +990,24 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     if not show:
         image.save(path)
         return ""
-    draw = ImageDraw.Draw(image, "RGBA")
     hook = reference_top_hook_text(viewer_hook(title, handle, transcript_text=transcript_text, clip_id=clip_id))
-    # Match the TikTok reference hook card after scaling the 720x1280 source
-    # to the app's 1080x1920 render target. The native text background hugs
-    # the longest line; the reference reaches this maximum width because its
-    # hook is long.
-    max_card_width = 881
-    card_top = 336
-    text_top = 356
-    text_max_width = 820
-    title_font = top_hook_card_font(52)
-    emoji_font = top_hook_emoji_font(64)
+
+    # TikTok's built-in text card is authored in the source 720x1280 design
+    # space and then upscaled with the video. Drawing natively at 1080 makes
+    # the same font look too crisp and blocky, so keep this card in that
+    # source-scale coordinate system and upscale the transparent overlay.
+    logical = Image.new("RGBA", (720, 1280), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(logical, "RGBA")
+    max_card_width = 588
+    card_top = 224
+    text_top = 238
+    text_max_width = 546
+    title_font = top_hook_card_font(35)
+    emoji_font = top_hook_emoji_font(40)
     lines: List[str] = []
-    for font_size in (52, 50, 48, 46, 44, 42, 40):
+    for font_size in (35, 34, 33, 32, 31, 30, 29, 28):
         candidate_font = top_hook_card_font(font_size)
-        candidate_emoji_font = top_hook_emoji_font(64 if font_size >= 50 else 52)
+        candidate_emoji_font = top_hook_emoji_font(40)
         candidate_lines = _reference_top_hook_lines(draw, hook, candidate_font, candidate_emoji_font, text_max_width)
         widths = [mixed_text_size(draw, line, candidate_font, candidate_emoji_font)[0] for line in candidate_lines]
         same_text = " ".join(candidate_lines).strip() == hook
@@ -1015,34 +1017,35 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
             lines = candidate_lines
             break
     if not lines:
-        title_font = top_hook_card_font(40)
-        emoji_font = top_hook_emoji_font(52)
+        title_font = top_hook_card_font(28)
+        emoji_font = top_hook_emoji_font(40)
         lines = _balanced_top_hook_lines(draw, hook, title_font, emoji_font, text_max_width)
     if not lines:
         image.save(path)
         return ""
     line_heights = [mixed_text_size(draw, line, title_font, emoji_font)[1] for line in lines]
     line_widths = [mixed_text_size(draw, line, title_font, emoji_font)[0] for line in lines]
-    card_width = min(max_card_width, max(520, max(line_widths) + 70))
-    card_left = int(round((1080 - card_width) / 2))
-    text_left = card_left + 35
-    gap = 10
+    card_width = min(max_card_width, max(347, max(line_widths) + 47))
+    card_left = int(round((720 - card_width) / 2))
+    text_left = card_left + 23
+    gap = 7
     text_block_height = sum(line_heights) + max(0, len(line_heights) - 1) * gap
-    card_height = max(96, min(157, text_block_height + 35))
+    card_height = max(64, min(105, text_block_height + 23))
     draw.rounded_rectangle(
-        (card_left + 3, card_top + 4, card_left + card_width + 3, card_top + card_height + 4),
-        radius=13,
+        (card_left + 2, card_top + 3, card_left + card_width + 2, card_top + card_height + 3),
+        radius=9,
         fill=(0, 0, 0, 28),
     )
     draw.rounded_rectangle(
         (card_left, card_top, card_left + card_width, card_top + card_height),
-        radius=13,
+        radius=9,
         fill=(255, 255, 255, 255),
     )
     y = text_top
     for line, line_height in zip(lines, line_heights):
         draw_mixed_text_visual_top(draw, line, text_left, y, title_font, emoji_font, (7, 7, 7, 255))
         y += line_height + gap
+    image = logical.resize((1080, 1920), Image.Resampling.LANCZOS)
     image.save(path)
     return hook
 
