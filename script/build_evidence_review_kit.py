@@ -153,17 +153,22 @@ def top_hook_font(size: int) -> ImageFont.ImageFont:
 
 
 def top_hook_card_font(size: int) -> ImageFont.ImageFont:
-    for candidate in [
-        FONT_DIR / "TikTokSans36pt-SemiBold.ttf",
-        FONT_DIR / "TikTokSans36pt-Bold.ttf",
-        FONT_DIR / "TikTokSans36pt-ExtraBold.ttf",
-        FONT_DIR / "TikTokSans36pt-Black.ttf",
-        Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
-        Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
-    ]:
+    candidates: List[tuple[Path, str | None]] = [
+        (Path("/System/Library/Fonts/SFNS.ttf"), "Semibold"),
+        (FONT_DIR / "TikTokSans36pt-SemiBold.ttf", None),
+        (FONT_DIR / "TikTokSans36pt-Bold.ttf", None),
+        (FONT_DIR / "TikTokSans36pt-ExtraBold.ttf", None),
+        (FONT_DIR / "TikTokSans36pt-Black.ttf", None),
+        (Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"), None),
+        (Path("/System/Library/Fonts/Supplemental/Arial.ttf"), None),
+    ]
+    for candidate, variation_name in candidates:
         if candidate.exists():
             try:
-                return ImageFont.truetype(str(candidate), size=size)
+                loaded = ImageFont.truetype(str(candidate), size=size)
+                if variation_name:
+                    loaded.set_variation_by_name(variation_name)
+                return loaded
             except OSError:
                 continue
     return top_hook_font(size)
@@ -1004,10 +1009,10 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     card_top = 224
     text_top = 238
     text_max_width = 546
-    title_font = top_hook_card_font(35)
+    title_font = top_hook_card_font(38)
     emoji_font = top_hook_emoji_font(40)
     lines: List[str] = []
-    for font_size in (35, 34, 33, 32, 31, 30, 29, 28):
+    for font_size in (38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28):
         candidate_font = top_hook_card_font(font_size)
         candidate_emoji_font = top_hook_emoji_font(40)
         candidate_lines = _reference_top_hook_lines(draw, hook, candidate_font, candidate_emoji_font, text_max_width)
