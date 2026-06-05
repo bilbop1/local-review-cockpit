@@ -214,13 +214,13 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
     left, top, right, bottom = bbox
     width = right - left
     height = bottom - top
-    if top < 300 or top > 380 or bottom < 420 or bottom > 560 or width < 800 or width > 980:
+    if left < 78 or left > 90 or top < 330 or top > 342 or right < 980 or right > 990 or bottom < 492 or bottom > 505 or width < 895 or width > 910:
         return {
             "required": True,
             "ok": False,
             "reason": (
                 f"top hook bbox {left},{top},{right},{bottom} does not match reference band "
-                "x width 800-980, y top 300-380, y bottom 420-560"
+                "x 84/984, y 336/498, width 900, height 162 with shadow"
             ),
             "bbox": [left, top, right, bottom],
             "width": width,
@@ -254,6 +254,68 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
         "frame": str(frame),
         "overlay": str(title_card),
     }
+
+
+def reference_layout_check(kit_dir: Path) -> Dict[str, Any]:
+    manifest_path = kit_dir / "render_text_manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"required": True, "ok": False, "reason": f"render_text_manifest.json unreadable for layout audit: {exc}"}
+    rendered = payload.get("rendered_text", {})
+    layout = str(rendered.get("layout", "") if isinstance(rendered, dict) else "").strip().lower()
+    profile = str(payload.get("profile", "")).strip()
+    required = profile == db.CAMPAIGN_SHORT_PROFILE or layout == "summary_hook_caption"
+    if not required:
+        return {"required": False, "ok": True}
+    composition = rendered.get("composition", {}) if isinstance(rendered, dict) else {}
+    if not isinstance(composition, dict):
+        return {"required": True, "ok": False, "reason": "rendered_text.composition is not an object"}
+    frame = composition.get("foreground_frame", {})
+    expected = {"x": 0, "y": 513, "width": 1080, "height": 607}
+    if composition.get("layout_style") != "tiktok_reference_stacked" or frame != expected:
+        return {
+            "required": True,
+            "ok": False,
+            "reason": "campaign render is not using the TikTok reference stacked foreground/blur layout",
+            "layout_style": composition.get("layout_style", ""),
+            "foreground_frame": frame,
+            "expected_foreground_frame": expected,
+        }
+    return {"required": True, "ok": True, "layout_style": "tiktok_reference_stacked", "foreground_frame": frame}
+
+
+def reference_watermark_check(kit_dir: Path) -> Dict[str, Any]:
+    manifest_path = kit_dir / "render_text_manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"required": True, "ok": False, "reason": f"render_text_manifest.json unreadable for watermark audit: {exc}"}
+    rendered = payload.get("rendered_text", {})
+    layout = str(rendered.get("layout", "") if isinstance(rendered, dict) else "").strip().lower()
+    profile = str(payload.get("profile", "")).strip()
+    required = profile == db.CAMPAIGN_SHORT_PROFILE or layout == "summary_hook_caption"
+    if not required:
+        return {"required": False, "ok": True}
+    watermark = rendered.get("reference_watermark", {}) if isinstance(rendered, dict) else {}
+    overlay = kit_dir / "reference_handle_watermark.png"
+    if not isinstance(watermark, dict) or not watermark.get("visible") or not str(watermark.get("text", "")).strip():
+        return {"required": True, "ok": False, "reason": "reference handle watermark is missing from manifest"}
+    if not overlay.exists():
+        return {"required": True, "ok": False, "reason": "reference_handle_watermark.png missing"}
+    alpha = Image.open(overlay).convert("RGBA").getchannel("A")
+    bbox = alpha.getbbox()
+    if not bbox:
+        return {"required": True, "ok": False, "reason": "reference_handle_watermark.png has no visible pixels"}
+    left, top, right, bottom = bbox
+    if top < 1230 or top > 1325 or bottom < 1320 or bottom > 1415:
+        return {
+            "required": True,
+            "ok": False,
+            "reason": f"reference watermark bbox {left},{top},{right},{bottom} is outside lower blur band",
+            "bbox": [left, top, right, bottom],
+        }
+    return {"required": True, "ok": True, "text": watermark.get("text", ""), "bbox": [left, top, right, bottom]}
 
 
 def verify_kit(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -304,6 +366,8 @@ def verify_kit(row: Dict[str, Any]) -> Dict[str, Any]:
     ok_count = sum(1 for item in checks if item.get("ok"))
     required = min(3, len(checks))
     hook_check = top_hook_check(kit_dir, video)
+    layout_check = reference_layout_check(kit_dir)
+    watermark_check = reference_watermark_check(kit_dir)
     return {
         "kit_id": row.get("id", ""),
         "title": row.get("title", ""),
@@ -314,7 +378,17 @@ def verify_kit(row: Dict[str, Any]) -> Dict[str, Any]:
         "checked_caption_frames": len(checks),
         "ok_caption_frames": ok_count,
         "top_hook_check": hook_check,
-        "ok": bool(required and ok_count >= required and hook_check.get("ok") and not timing_violations and not text_violations),
+        "reference_layout_check": layout_check,
+        "reference_watermark_check": watermark_check,
+        "ok": bool(
+            required
+            and ok_count >= required
+            and hook_check.get("ok")
+            and layout_check.get("ok")
+            and watermark_check.get("ok")
+            and not timing_violations
+            and not text_violations
+        ),
         "checks": checks,
     }
 

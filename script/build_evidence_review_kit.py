@@ -151,6 +151,33 @@ def top_hook_font(size: int) -> ImageFont.ImageFont:
     return font(size)
 
 
+def top_hook_card_font(size: int) -> ImageFont.ImageFont:
+    for candidate in [
+        Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+        FONT_DIR / "TikTokSans36pt-ExtraBold.ttf",
+        FONT_DIR / "TikTokSans36pt-Black.ttf",
+        Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
+    ]:
+        if candidate.exists():
+            try:
+                return ImageFont.truetype(str(candidate), size=size)
+            except OSError:
+                continue
+    return top_hook_font(size)
+
+
+def top_hook_emoji_font(size: int) -> ImageFont.ImageFont | None:
+    candidate = Path("/System/Library/Fonts/Apple Color Emoji.ttc")
+    if not candidate.exists():
+        return None
+    supported_sizes = (20, 26, 32, 40, 48, 52, 64, 96)
+    nearest = min(supported_sizes, key=lambda item: abs(item - size))
+    try:
+        return ImageFont.truetype(str(candidate), size=nearest)
+    except OSError:
+        return None
+
+
 def text_size(draw: ImageDraw.ImageDraw, text: str, style_font: ImageFont.ImageFont, stroke_width: int = 0) -> tuple[int, int]:
     bbox = draw.textbbox((0, 0), text, font=style_font, stroke_width=stroke_width)
     return bbox[2] - bbox[0], bbox[3] - bbox[1]
@@ -175,6 +202,71 @@ def draw_text_visual_top(
     if stroke_fill is not None and stroke_width:
         kwargs.update({"stroke_width": stroke_width, "stroke_fill": stroke_fill})
     draw.text((left - bbox[0], top - bbox[1]), text, **kwargs)
+
+
+def is_emoji_char(char: str) -> bool:
+    code = ord(char)
+    return (
+        0x1F000 <= code <= 0x1FAFF
+        or 0x2600 <= code <= 0x27BF
+        or code in {0xFE0F, 0x200D}
+    )
+
+
+def mixed_text_runs(text: str) -> List[tuple[bool, str]]:
+    runs: List[tuple[bool, str]] = []
+    current = ""
+    current_is_emoji: bool | None = None
+    for char in str(text):
+        char_is_emoji = is_emoji_char(char)
+        if current and char_is_emoji != current_is_emoji:
+            runs.append((bool(current_is_emoji), current))
+            current = char
+        else:
+            current += char
+        current_is_emoji = char_is_emoji
+    if current:
+        runs.append((bool(current_is_emoji), current))
+    return runs
+
+
+def mixed_text_size(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    style_font: ImageFont.ImageFont,
+    emoji_font: ImageFont.ImageFont | None,
+) -> tuple[int, int]:
+    width = 0
+    height = 0
+    for is_emoji, run_text in mixed_text_runs(text):
+        run_font = emoji_font if is_emoji and emoji_font is not None else style_font
+        bbox = draw.textbbox((0, 0), run_text, font=run_font)
+        width += bbox[2] - bbox[0]
+        height = max(height, bbox[3] - bbox[1])
+    return width, height
+
+
+def draw_mixed_text_visual_top(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    left: int,
+    top: int,
+    style_font: ImageFont.ImageFont,
+    emoji_font: ImageFont.ImageFont | None,
+    fill: tuple[int, int, int, int],
+) -> None:
+    x = left
+    for is_emoji, run_text in mixed_text_runs(text):
+        run_font = emoji_font if is_emoji and emoji_font is not None else style_font
+        bbox = draw.textbbox((0, 0), run_text, font=run_font)
+        if is_emoji and emoji_font is not None:
+            try:
+                draw.text((x - bbox[0], top - bbox[1]), run_text, font=run_font, embedded_color=True)
+            except TypeError:
+                draw.text((x - bbox[0], top - bbox[1]), run_text, font=run_font, fill=fill)
+        else:
+            draw.text((x - bbox[0], top - bbox[1]), run_text, font=run_font, fill=fill)
+        x += bbox[2] - bbox[0]
 
 
 def write_text(path: Path, text: str) -> None:
@@ -811,14 +903,47 @@ def _wrapped_lines(draw: ImageDraw.ImageDraw, text: str, style_font: ImageFont.I
     return [line for line in lines if line]
 
 
-def _balanced_top_hook_lines(draw: ImageDraw.ImageDraw, text: str, style_font: ImageFont.ImageFont, max_width: int) -> List[str]:
+def _top_hook_wrapped_lines(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    style_font: ImageFont.ImageFont,
+    emoji_font: ImageFont.ImageFont | None,
+    max_width: int,
+    max_lines: int = 2,
+) -> List[str]:
     words = text.split()
-    if len(words) <= 4 and text_size(draw, text, style_font)[0] <= max_width:
+    lines: List[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if not current or mixed_text_size(draw, candidate, style_font, emoji_font)[0] <= max_width:
+            current = candidate
+            continue
+        lines.append(current)
+        current = word
+        if len(lines) == max_lines - 1:
+            break
+    if current and len(lines) < max_lines:
+        remaining_words = words[sum(len(line.split()) for line in lines) :]
+        current = " ".join(remaining_words) if remaining_words else current
+        lines.append(current)
+    return [line for line in lines if line]
+
+
+def _balanced_top_hook_lines(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    style_font: ImageFont.ImageFont,
+    emoji_font: ImageFont.ImageFont | None,
+    max_width: int,
+) -> List[str]:
+    words = text.split()
+    if len(words) <= 4 and mixed_text_size(draw, text, style_font, emoji_font)[0] <= max_width:
         return [text]
     best: tuple[float, List[str]] | None = None
     for split in range(1, len(words)):
         lines = [" ".join(words[:split]), " ".join(words[split:])]
-        widths = [text_size(draw, line, style_font)[0] for line in lines]
+        widths = [mixed_text_size(draw, line, style_font, emoji_font)[0] for line in lines]
         if any(width > max_width for width in widths):
             continue
         word_balance_penalty = abs(split - (len(words) - split)) * 18
@@ -827,16 +952,36 @@ def _balanced_top_hook_lines(draw: ImageDraw.ImageDraw, text: str, style_font: I
             best = (score, lines)
     if best is not None:
         return best[1]
-    return _wrapped_lines(draw, text, style_font, max_width, max_lines=2)
+    return _top_hook_wrapped_lines(draw, text, style_font, emoji_font, max_width, max_lines=2)
 
 
-def _reference_top_hook_lines(draw: ImageDraw.ImageDraw, text: str, style_font: ImageFont.ImageFont, max_width: int) -> List[str]:
-    greedy = _wrapped_lines(draw, text, style_font, max_width, max_lines=2)
+def _reference_top_hook_lines(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    style_font: ImageFont.ImageFont,
+    emoji_font: ImageFont.ImageFont | None,
+    max_width: int,
+) -> List[str]:
+    greedy = _top_hook_wrapped_lines(draw, text, style_font, emoji_font, max_width, max_lines=2)
     if len(greedy) == 2:
-        widths = [text_size(draw, line, style_font)[0] for line in greedy]
+        widths = [mixed_text_size(draw, line, style_font, emoji_font)[0] for line in greedy]
         if min(widths) / max(1, max(widths)) >= 0.55:
             return greedy
-    return _balanced_top_hook_lines(draw, text, style_font, max_width)
+    return _balanced_top_hook_lines(draw, text, style_font, emoji_font, max_width)
+
+
+def reference_top_hook_text(hook: str) -> str:
+    clean = " ".join(str(hook).split()).strip(" ,.;:-")
+    if not clean:
+        return ""
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'’.-]*", clean)
+    lowered = clean.lower()
+    if len(words) < 9 and "stream" not in lowered:
+        clean = f"{clean} on stream"
+    has_emoji = any(is_emoji_char(char) for char in clean)
+    if not has_emoji:
+        clean = f"{clean} 🤣🤣"
+    return clean
 
 
 def headline_card(path: Path, title: str, handle: str, transcript_text: str = "", clip_id: str = "", *, show: bool = True) -> str:
@@ -845,36 +990,50 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         image.save(path)
         return ""
     draw = ImageDraw.Draw(image, "RGBA")
-    hook = viewer_hook(title, handle, transcript_text=transcript_text, clip_id=clip_id)
-    title_font = top_hook_font(40 if len(hook) > 78 else 42)
-    card_left = 60
+    hook = reference_top_hook_text(viewer_hook(title, handle, transcript_text=transcript_text, clip_id=clip_id))
+    card_left = 84
     card_top = 336
-    card_width = 920
-    text_left = card_left + 27
-    text_max_width = 690
-    lines = _reference_top_hook_lines(draw, hook, title_font, text_max_width)
+    card_width = 896
+    card_height = 157
+    text_left = 134
+    text_top = 356
+    text_max_width = 840
+    title_font = top_hook_card_font(52)
+    emoji_font = top_hook_emoji_font(64)
+    lines: List[str] = []
+    for font_size in (52, 50, 48, 46, 44, 42, 40):
+        candidate_font = top_hook_card_font(font_size)
+        candidate_emoji_font = top_hook_emoji_font(64 if font_size >= 50 else 52)
+        candidate_lines = _reference_top_hook_lines(draw, hook, candidate_font, candidate_emoji_font, text_max_width)
+        widths = [mixed_text_size(draw, line, candidate_font, candidate_emoji_font)[0] for line in candidate_lines]
+        same_text = " ".join(candidate_lines).strip() == hook
+        if candidate_lines and len(candidate_lines) <= 2 and all(width <= text_max_width for width in widths) and same_text:
+            title_font = candidate_font
+            emoji_font = candidate_emoji_font
+            lines = candidate_lines
+            break
+    if not lines:
+        title_font = top_hook_card_font(40)
+        emoji_font = top_hook_emoji_font(52)
+        lines = _balanced_top_hook_lines(draw, hook, title_font, emoji_font, text_max_width)
     if not lines:
         image.save(path)
         return ""
-    line_heights = [text_size(draw, line, title_font)[1] for line in lines]
-    gap = 8
-    pad_top = 20
-    pad_bottom = 24
-    content_height = sum(line_heights) + max(0, len(lines) - 1) * gap
-    card_height = max(148 if len(lines) > 1 else 104, content_height + pad_top + pad_bottom)
+    line_heights = [mixed_text_size(draw, line, title_font, emoji_font)[1] for line in lines]
+    gap = 12
     draw.rounded_rectangle(
         (card_left + 3, card_top + 4, card_left + card_width + 3, card_top + card_height + 4),
-        radius=10,
-        fill=(0, 0, 0, 32),
+        radius=13,
+        fill=(0, 0, 0, 28),
     )
     draw.rounded_rectangle(
         (card_left, card_top, card_left + card_width, card_top + card_height),
-        radius=9,
-        fill=(255, 255, 255, 250),
+        radius=13,
+        fill=(255, 255, 255, 255),
     )
-    y = card_top + pad_top
+    y = text_top
     for line, line_height in zip(lines, line_heights):
-        draw_text_visual_top(draw, line, text_left, y, title_font, (7, 7, 7, 255))
+        draw_mixed_text_visual_top(draw, line, text_left, y, title_font, emoji_font, (7, 7, 7, 255))
         y += line_height + gap
     image.save(path)
     return hook
@@ -899,6 +1058,42 @@ def source_badge(path: Path, platform: str, handle: str, *, show: bool = True) -
     draw.text((left + width_prefix, top), suffix, font=style_font, fill=(245, 245, 245, 255), stroke_width=5, stroke_fill=(0, 0, 0, 235))
     image.save(path)
     return text
+
+
+def reference_handle_watermark(path: Path, platform: str, handle: str, *, show: bool = True) -> Dict[str, Any]:
+    image = Image.new("RGBA", (1080, 1920), (0, 0, 0, 0))
+    clean_handle = str(handle or "").strip().lstrip("@")
+    if not show or not clean_handle:
+        image.save(path)
+        return {}
+    draw = ImageDraw.Draw(image, "RGBA")
+    text = f"@{clean_handle.lower()}"
+    style_font = top_hook_font(53)
+    text_width, text_height = text_size(draw, text, style_font, stroke_width=4)
+    icon_size = 42
+    gap = 8
+    total_width = icon_size + gap + text_width
+    left = (1080 - total_width) // 2
+    top = 1270
+    color = (145, 70, 255, 255) if str(platform).lower() == "twitch" else (55, 220, 62, 255)
+    draw.rounded_rectangle((left + 2, top + 2, left + icon_size + 2, top + icon_size + 2), radius=9, fill=(0, 0, 0, 120))
+    draw.rounded_rectangle((left, top, left + icon_size, top + icon_size), radius=8, fill=color)
+    bubble = (left + 10, top + 10, left + 32, top + 27)
+    draw.rounded_rectangle(bubble, radius=3, outline=(255, 255, 255, 255), width=4)
+    draw.polygon([(left + 18, top + 27), (left + 18, top + 34), (left + 26, top + 27)], fill=(255, 255, 255, 255))
+    text_left = left + icon_size + gap
+    text_top = top - 7
+    draw_text_visual_top(draw, text, text_left, text_top, style_font, (255, 255, 255, 255), (0, 0, 0, 245), 4)
+    image.save(path)
+    return {
+        "visible": True,
+        "text": text,
+        "position": "bottom_blur_center",
+        "x": left,
+        "y": top,
+        "width": total_width,
+        "height": max(icon_size, text_height + 14),
+    }
 
 
 def draw_capsule_caption(
@@ -1140,6 +1335,16 @@ def standard_layout_filter() -> str:
         "boxblur=18:2,eq=brightness=-0.10:saturation=0.90,setsar=1[bg];"
         "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,setsar=1[fg];"
         "[bg][fg]overlay=(W-w)/2:(H-h)/2[base]"
+    )
+
+
+def reference_stacked_layout_filter() -> str:
+    return (
+        "[0:v]split=2[src_bg][src_fg];"
+        "[src_bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+        "boxblur=24:2,eq=brightness=-0.10:saturation=0.90,setsar=1[bg];"
+        "[src_fg]scale=1080:607:force_original_aspect_ratio=increase,crop=1080:607,setsar=1[fg];"
+        "[bg][fg]overlay=0:513[base]"
     )
 
 
@@ -1393,6 +1598,7 @@ def render_review_video(
         stale_header.unlink()
     title_card_path = kit_dir / "title_card.png"
     source_badge_path = kit_dir / "source_badge.png"
+    reference_watermark_path = kit_dir / "reference_handle_watermark.png"
     caption_only_profile = profile == db.CAMPAIGN_SHORT_PROFILE
     campaign_slug = db.normalize_campaign_slug(campaign_slug)
     watermark_asset = db.campaign_watermark_asset_path(campaign_slug) if caption_only_profile and campaign_slug else ""
@@ -1412,6 +1618,12 @@ def render_review_video(
         handle,
         show=(not caption_only_profile and handle.lower() != "lacy"),
     )
+    reference_watermark_info = reference_handle_watermark(
+        reference_watermark_path,
+        platform,
+        handle,
+        show=caption_only_profile,
+    )
 
     source_width, source_height = source_dimensions(media_path)
     composition = streamer_composition_plan(media_path, kit_dir, platform, source_width, source_height)
@@ -1428,28 +1640,41 @@ def render_review_video(
         watermark_overlay_path = kit_dir / "campaign_watermark.png"
         watermark_info = campaign_watermark_overlay(watermark_overlay_path, Path(watermark_asset))
 
-    base_layout = (
-        streamer_split_layout_filter(composition)
-        if composition.get("mode") == "streamer_split_facecam_top"
-        else standard_layout_filter()
-    )
-    caption_input_start = 3
+    if caption_only_profile:
+        composition = {
+            **composition,
+            "layout_style": "tiktok_reference_stacked",
+            "foreground_frame": {"x": 0, "y": 513, "width": 1080, "height": 607},
+            "background_style": "blurred_fullscreen_source",
+            "reason": (
+                str(composition.get("reason", "")).strip()
+                + "; campaign final uses reference stacked layout: hook over blurred top band, full-width sharp source below."
+            ).strip("; "),
+        }
+        base_layout = reference_stacked_layout_filter()
+    else:
+        base_layout = (
+            streamer_split_layout_filter(composition)
+            if composition.get("mode") == "streamer_split_facecam_top"
+            else standard_layout_filter()
+        )
     title_overlay_enable = "" if caption_only_profile else ":enable='between(t,0,3.00)'"
-    base = (
+    filters = [
         f"{base_layout};"
         f"[base][1:v]overlay=0:0:format=auto{title_overlay_enable}[title];"
         "[title][2:v]overlay=0:0:format=auto[v0]"
-    )
-    if watermark_overlay_path:
-        base = (
-            f"{base_layout};"
-            f"[base][1:v]overlay=0:0:format=auto{title_overlay_enable}[title];"
-            "[title][2:v]overlay=0:0:format=auto[prewm];"
-            "[prewm][3:v]overlay=0:0:format=auto[v0]"
-        )
-        caption_input_start = 4
-    filters = [base]
+    ]
     current = "v0"
+    next_input_index = 3
+    if reference_watermark_info:
+        filters.append(f"[{current}][{next_input_index}:v]overlay=0:0:format=auto[refwm]")
+        current = "refwm"
+        next_input_index += 1
+    if watermark_overlay_path:
+        filters.append(f"[{current}][{next_input_index}:v]overlay=0:0:format=auto[campaignwm]")
+        current = "campaignwm"
+        next_input_index += 1
+    caption_input_start = next_input_index
     for index, beat in enumerate(beats, start=1):
         next_label = f"cap{index}"
         input_index = caption_input_start + index - 1
@@ -1460,6 +1685,8 @@ def render_review_video(
     filters.append(f"[{current}]null[v]")
 
     command = ["ffmpeg", "-y", "-i", str(media_path), "-i", str(title_card_path), "-i", str(source_badge_path)]
+    if reference_watermark_info:
+        command.extend(["-i", str(reference_watermark_path)])
     if watermark_overlay_path:
         command.extend(["-i", str(watermark_overlay_path)])
     for caption_path in caption_paths:
@@ -1528,6 +1755,8 @@ def render_review_video(
             "ab_variant": caption_variant,
         },
         "composition": composition,
+        "reference_watermark": reference_watermark_info,
+        "reference_watermark_visible": bool(reference_watermark_info),
         "campaign_watermark": watermark_info,
         "watermark_visible": bool(watermark_info),
     }

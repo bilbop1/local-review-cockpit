@@ -23,7 +23,9 @@ The renderer previously used macOS Arial Bold fallback. That was close enough to
 - A single long word may exceed 12 characters, but it must appear alone.
 - Campaign final renders must include a persistent top summary hook card plus subtitles. The hook must be viewer-facing context, not an internal label.
 - The top hook should summarize the tension without spoiling the payoff, similar to the TikTok reference `https://www.tiktok.com/t/ZTBDvvEfD/`.
-- Top hook geometry is part of the standard: on a 1080x1920 render, the white card should sit around x=60, y=336, width about 920, with left-aligned black TikTok Sans ExtraBold text and minimal shadow.
+- Top hook geometry is part of the standard: on a 1080x1920 render, the white rounded card sits at x=84, y=336, width=896, height=157, plus a tiny shadow ending around x=984, y=498. Text starts at x=134, visual y=356, uses Arial Bold 52px with 64px emoji, and uses a 12px two-line gap. This measured spec matches the TikTok reference card more closely than the prior small pill-style TikTok ExtraBold overlay.
+- Campaign final layout is also part of the standard: blurred full-screen source background, sharp 16:9 foreground source at x=0, y=513, width=1080, height=607. Do not vertically center the foreground source for this lane.
+- Campaign final renders include a public-facing bottom-blur creator watermark around y=1270. This is source identity, not internal state.
 - Internal labels remain blocked: no proof banners, no selected-feeder wording, no review-safe text, no demo wording.
 - Captions belong just below the active foreground frame when source media is landscape, or in the lower safe area for vertical media. They must not sit in the center of the screen, cover faces, or dominate the clip.
 - Current 1080x1920 safe band: y=1210-1400, with visual center near y=1306.
