@@ -243,7 +243,7 @@ class BackendSmokeTests(unittest.TestCase):
             self.assertGreaterEqual(metrics["right_pad"], 33)
             self.assertLess(abs(metrics["card_center_x"] - 540), 4)
 
-    def test_short_two_line_top_hook_uses_fit_width_card(self):
+    def test_short_two_line_top_hook_keeps_reference_like_card_width(self):
         from PIL import Image
         from script.audit_top_card_reference import measure_overlay
 
@@ -260,8 +260,8 @@ class BackendSmokeTests(unittest.TestCase):
             hook = module.headline_card(path, "Jason got tired of fake rumor math", "jasontheween")
             self.assertIn("fake rumor math", hook)
             metrics = measure_overlay(Image.open(path).convert("RGBA"))
-            self.assertGreaterEqual(metrics["card_width"], 685)
-            self.assertLessEqual(metrics["card_width"], 760)
+            self.assertGreaterEqual(metrics["card_width"], 795)
+            self.assertLessEqual(metrics["card_width"], 835)
             self.assertGreaterEqual(metrics["left_pad"], 34)
             self.assertLessEqual(metrics["left_pad"], 38)
             self.assertLess(abs(metrics["card_center_x"] - 540), 4)

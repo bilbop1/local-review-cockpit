@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -300,6 +301,33 @@ def stretch_visible_overlay_y(image: Image.Image, scale_y: float) -> Image.Image
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def acquire_kit_lock(kit_dir: Path, timeout_seconds: float = 900.0):
+    lock_path = kit_dir / ".render.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_path.open("w", encoding="utf-8")
+    started = time.time()
+    while True:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file.seek(0)
+            lock_file.truncate()
+            lock_file.write(json.dumps({"pid": os.getpid(), "locked_at": db.utc_now()}) + "\n")
+            lock_file.flush()
+            return lock_file
+        except BlockingIOError:
+            if time.time() - started > timeout_seconds:
+                lock_file.close()
+                raise RuntimeError(f"Timed out waiting for render-kit lock: {lock_path}")
+            time.sleep(0.5)
+
+
+def release_kit_lock(lock_file) -> None:
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    finally:
+        lock_file.close()
 
 
 def route_candidates(campaign_slug: str = "") -> List[Dict[str, Any]]:
@@ -1048,12 +1076,14 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         return ""
     line_heights = [mixed_text_size(draw, line, title_font, emoji_font)[1] for line in lines]
     line_widths = [mixed_text_size(draw, line, title_font, emoji_font)[0] for line in lines]
-    # Long hooks should reach the reference card width, but shorter hooks
-    # need to fit their longest line so the white card does not look empty.
+    # The TikTok reference behaves like a stable two-line text card, not a
+    # tiny auto-sized pill. Long hooks reach the reference width; shorter
+    # hooks still keep a substantial card so the top text reads like the same
+    # platform overlay instead of custom app UI.
     if len(lines) == 2:
-        card_width = min(max_card_width, max(460, max(line_widths) + 44))
+        card_width = min(max_card_width, max(535, max(line_widths) + 56))
     else:
-        card_width = min(max_card_width, max(347, max(line_widths) + 47))
+        card_width = min(max_card_width, max(535, max(line_widths) + 56))
     card_left = int(round((720 - card_width) / 2))
     text_left = card_left + 22
     gap = 10
@@ -2240,76 +2270,80 @@ def build_review_kit(clip_id: str = "", profile: str = "evidence_review_v1", cam
         existing_kit = None
         kit_dir = KIT_ROOT / f"{stamp}-{slug}-{handle}-{clip['id']}"
     kit_dir.mkdir(parents=True, exist_ok=True)
-    review_video, rendered_text = render_review_video(
-        media_path,
-        kit_dir,
-        str(clip.get("title", "")),
-        handle or "source",
-        str(clip.get("source_platform", "")) or str(route.get("platform", "")) or "twitch",
-        beats,
-        transcript_text=str(transcript.get("full_text", "")),
-        clip_id=str(clip.get("id", "")),
-        profile=profile,
-        caption_variant=caption_variant,
-        campaign_slug=project_slug,
-    )
-    rendered_text["caption_generation"] = caption_generation
-    artifacts = write_artifacts(candidate, transcript, kit_dir, review_video, beats, profile, rendered_text)
-    if profile in {db.FINAL_PROOF_PROFILE, db.CAMPAIGN_SHORT_PROFILE}:
-        if profile == db.CAMPAIGN_SHORT_PROFILE:
-            kit_title = campaign_kit_title(clip, project_slug, transcript)
-        else:
-            kit_title = str(clip.get("title", "")).strip() or str(rendered_text.get("hook_card", "")).strip() or "Streamer clip"
-    else:
-        kit_title = f"{clip.get('title', '').strip() or 'Review Kit'} - Evidence Review"
-    if existing_kit:
-        kit_id = str(existing_kit["id"])
-        db.execute(
-            """
-            UPDATE render_kits
-            SET campaign_slug=?, title=?, review_video_path=?, caption_path=?, transcript_path=?, checklist_path=?, source_path=?, risk_path=?, is_demo=0
-            WHERE id=?
-            """,
-            (
-                project_slug,
-                kit_title,
-                str(review_video),
-                str(artifacts["caption"]),
-                str(artifacts["transcript"]),
-                str(artifacts["checklist"]),
-                str(artifacts["source"]),
-                str(artifacts["risk"]),
-                kit_id,
-            ),
-        )
-    else:
-        kit_id = db.create_render_kit(
-            nomination_id,
-            kit_title,
-            review_video,
-            artifacts["caption"],
-            artifacts["transcript"],
-            artifacts["checklist"],
-            artifacts["source"],
-            artifacts["risk"],
-            is_demo=False,
+    lock_file = acquire_kit_lock(kit_dir)
+    try:
+        review_video, rendered_text = render_review_video(
+            media_path,
+            kit_dir,
+            str(clip.get("title", "")),
+            handle or "source",
+            str(clip.get("source_platform", "")) or str(route.get("platform", "")) or "twitch",
+            beats,
+            transcript_text=str(transcript.get("full_text", "")),
+            clip_id=str(clip.get("id", "")),
+            profile=profile,
+            caption_variant=caption_variant,
             campaign_slug=project_slug,
         )
-    db.log_audit("worker", "render_evidence_review_kit", "render_kit", kit_id, "created evidence-backed non-demo review kit", str(review_video))
-    return {
-        "status": "succeeded",
-        "reused_existing": bool(existing_kit),
-        "clip_id": str(clip["id"]),
-        "title": kit_title,
-        "kit_id": kit_id,
-        "nomination_id": nomination_id,
-        "source_url": str(clip.get("source_url", "")),
-        "local_media_path": str(media_path),
-        "review_video_path": str(review_video),
-        "kit_dir": str(kit_dir),
-        "profile": profile,
-        "caption_variant": rendered_text.get("caption_style", {}).get("ab_variant", ""),
-    }
+        rendered_text["caption_generation"] = caption_generation
+        artifacts = write_artifacts(candidate, transcript, kit_dir, review_video, beats, profile, rendered_text)
+        if profile in {db.FINAL_PROOF_PROFILE, db.CAMPAIGN_SHORT_PROFILE}:
+            if profile == db.CAMPAIGN_SHORT_PROFILE:
+                kit_title = campaign_kit_title(clip, project_slug, transcript)
+            else:
+                kit_title = str(clip.get("title", "")).strip() or str(rendered_text.get("hook_card", "")).strip() or "Streamer clip"
+        else:
+            kit_title = f"{clip.get('title', '').strip() or 'Review Kit'} - Evidence Review"
+        if existing_kit:
+            kit_id = str(existing_kit["id"])
+            db.execute(
+                """
+                UPDATE render_kits
+                SET campaign_slug=?, title=?, review_video_path=?, caption_path=?, transcript_path=?, checklist_path=?, source_path=?, risk_path=?, is_demo=0
+                WHERE id=?
+                """,
+                (
+                    project_slug,
+                    kit_title,
+                    str(review_video),
+                    str(artifacts["caption"]),
+                    str(artifacts["transcript"]),
+                    str(artifacts["checklist"]),
+                    str(artifacts["source"]),
+                    str(artifacts["risk"]),
+                    kit_id,
+                ),
+            )
+        else:
+            kit_id = db.create_render_kit(
+                nomination_id,
+                kit_title,
+                review_video,
+                artifacts["caption"],
+                artifacts["transcript"],
+                artifacts["checklist"],
+                artifacts["source"],
+                artifacts["risk"],
+                is_demo=False,
+                campaign_slug=project_slug,
+            )
+        db.log_audit("worker", "render_evidence_review_kit", "render_kit", kit_id, "created evidence-backed non-demo review kit", str(review_video))
+        return {
+            "status": "succeeded",
+            "reused_existing": bool(existing_kit),
+            "clip_id": str(clip["id"]),
+            "title": kit_title,
+            "kit_id": kit_id,
+            "nomination_id": nomination_id,
+            "source_url": str(clip.get("source_url", "")),
+            "local_media_path": str(media_path),
+            "review_video_path": str(review_video),
+            "kit_dir": str(kit_dir),
+            "profile": profile,
+            "caption_variant": rendered_text.get("caption_style", {}).get("ab_variant", ""),
+        }
+    finally:
+        release_kit_lock(lock_file)
 
 
 def main() -> None:
