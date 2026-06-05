@@ -1090,7 +1090,7 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     if not lines:
         image.save(path)
         return ""
-    text_fill = (0, 0, 0, 255)
+    text_fill = (22, 22, 22, 255)
     line_heights = [mixed_text_size(draw, line, title_font, emoji_font)[1] for line in lines]
     visual_line_widths = [mixed_text_visual_width(line, title_font, emoji_font, text_fill) for line in lines]
     # The TikTok reference hugs the text block with consistent left/right

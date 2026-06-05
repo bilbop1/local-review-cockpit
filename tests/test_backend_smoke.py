@@ -242,6 +242,10 @@ class BackendSmokeTests(unittest.TestCase):
             self.assertLessEqual(metrics["left_pad"], 35)
             self.assertGreaterEqual(metrics["right_pad"], 31)
             self.assertLessEqual(metrics["right_pad"], 34)
+            self.assertGreaterEqual(metrics["top_pad"], 22)
+            self.assertLessEqual(metrics["top_pad"], 22)
+            self.assertGreaterEqual(metrics["bottom_pad"], 14)
+            self.assertLessEqual(metrics["bottom_pad"], 14)
             self.assertLess(abs(metrics["card_center_x"] - 540), 2)
 
     def test_short_two_line_top_hook_hugs_visible_text_with_reference_padding(self):
