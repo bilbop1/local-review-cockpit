@@ -282,6 +282,22 @@ def draw_mixed_text_visual_top(
         x += bbox[2] - bbox[0]
 
 
+def mixed_text_visual_width(
+    text: str,
+    style_font: ImageFont.ImageFont,
+    emoji_font: ImageFont.ImageFont | None,
+    fill: tuple[int, int, int, int],
+) -> int:
+    scratch = Image.new("RGBA", (900, 180), (0, 0, 0, 0))
+    scratch_draw = ImageDraw.Draw(scratch, "RGBA")
+    draw_mixed_text_visual_top(scratch_draw, text, 80, 64, style_font, emoji_font, fill)
+    alpha = scratch.getchannel("A")
+    bbox = alpha.getbbox()
+    if not bbox:
+        return 0
+    return bbox[2] - bbox[0]
+
+
 def stretch_visible_overlay_y(image: Image.Image, scale_y: float) -> Image.Image:
     if scale_y == 1.0:
         return image
@@ -1074,16 +1090,16 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     if not lines:
         image.save(path)
         return ""
+    text_fill = (7, 7, 7, 255)
     line_heights = [mixed_text_size(draw, line, title_font, emoji_font)[1] for line in lines]
-    line_widths = [mixed_text_size(draw, line, title_font, emoji_font)[0] for line in lines]
-    # The TikTok reference behaves like a stable two-line text card, not a
-    # tiny auto-sized pill. Long hooks reach the reference width; shorter
-    # hooks still keep a substantial card so the top text reads like the same
-    # platform overlay instead of custom app UI.
+    visual_line_widths = [mixed_text_visual_width(line, title_font, emoji_font, text_fill) for line in lines]
+    # The TikTok reference hugs the text block with consistent left/right
+    # padding. Long hooks reach the reference max width; shorter hooks should
+    # shrink to the longest line instead of carrying dead white space.
     if len(lines) == 2:
-        card_width = min(max_card_width, max(535, max(line_widths) + 56))
+        card_width = min(max_card_width, max(330, max(visual_line_widths) + 46))
     else:
-        card_width = min(max_card_width, max(535, max(line_widths) + 56))
+        card_width = min(max_card_width, max(330, max(visual_line_widths) + 46))
     card_left = int(round((720 - card_width) / 2))
     text_left = card_left + 22
     gap = 10
@@ -1101,14 +1117,10 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     )
     y = text_top
     for line, line_height in zip(lines, line_heights):
-        draw_mixed_text_visual_top(draw, line, text_left, y, title_font, emoji_font, (7, 7, 7, 255))
+        draw_mixed_text_visual_top(draw, line, text_left, y, title_font, emoji_font, text_fill)
         y += line_height + gap
     image = logical.resize((1080, 1920), Image.Resampling.LANCZOS)
-    image = stretch_visible_overlay_y(image, 1.015)
-    # The TikTok reference card is a compressed platform overlay, not a
-    # razor-crisp native app layer. A tiny post-resize softening keeps the
-    # same geometry while matching that optical edge quality more closely.
-    image = image.resize((540, 960), Image.Resampling.BICUBIC).resize((1080, 1920), Image.Resampling.BICUBIC)
+    image = stretch_visible_overlay_y(image, 1.034)
     image.save(path)
     return hook
 
