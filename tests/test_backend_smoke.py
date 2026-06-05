@@ -193,23 +193,44 @@ class BackendSmokeTests(unittest.TestCase):
         sys.modules["build_evidence_review_kit_for_top_hook_test"] = module
         spec.loader.exec_module(module)
 
-        font_name = module.top_hook_card_font(35).getname()
-        tiktok_semibold = (
+        font_name = module.top_hook_card_font(34).getname()
+        tiktok_bold = (
             Path(__file__).resolve().parents[1]
             / "backend"
             / "clipping_ops_backend"
             / "assets"
             / "fonts"
-            / "TikTokSans36pt-SemiBold.ttf"
+            / "TikTokSans36pt-Bold.ttf"
         )
-        if tiktok_semibold.exists():
-            self.assertEqual(font_name, ("TikTok Sans", "SemiBold"))
+        if tiktok_bold.exists():
+            self.assertEqual(font_name, ("TikTok Sans", "Bold"))
         elif Path("/System/Library/Fonts/Avenir Next.ttc").exists():
             self.assertEqual(font_name, ("Avenir Next", "Demi Bold"))
         elif Path("/System/Library/Fonts/SFNS.ttf").exists():
             self.assertEqual(font_name, ("System Font", "Semibold"))
         else:
             self.assertEqual(font_name, ("TikTok Sans", "SemiBold"))
+
+    def test_two_line_top_hook_uses_reference_width_card(self):
+        from PIL import Image
+        from script.audit_top_card_reference import measure_overlay
+
+        module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"
+        spec = importlib.util.spec_from_file_location("build_evidence_review_kit_for_top_card_width_test", module_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["build_evidence_review_kit_for_top_card_width_test"] = module
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "title_card.png"
+            hook = module.headline_card(path, "Jason got tired of fake rumor math", "jasontheween")
+            self.assertIn("fake rumor math", hook)
+            metrics = measure_overlay(Image.open(path).convert("RGBA"))
+            self.assertGreaterEqual(metrics["card_width"], 875)
+            self.assertLessEqual(metrics["card_width"], 895)
+            self.assertLess(abs(metrics["card_center_x"] - 540), 4)
 
     def test_top_hook_does_not_append_fake_stream_suffix(self):
         module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"

@@ -228,13 +228,13 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
     width = right - left
     height = bottom - top
     center_x = (left + right) / 2
-    if abs(center_x - 541.5) > 8 or top < 330 or top > 342 or height < 138 or height > 166 or width < 520 or width > 890:
+    if abs(center_x - 541.5) > 8 or top < 330 or top > 342 or height < 138 or height > 166 or width < 875 or width > 895:
         return {
             "required": True,
             "ok": False,
             "reason": (
                 f"top hook bbox {left},{top},{right},{bottom} does not match reference band "
-                "centered at x 540, y=336, content-hugging width 520-890, height 138-166 with shadow"
+                "centered at x 540, y=336, reference-width 875-895, height 138-166 with shadow"
             ),
             "bbox": [left, top, right, bottom],
             "width": width,
@@ -267,12 +267,12 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
     top_pad = text_top - top
     bottom_pad = bottom - text_bottom
     content_height = text_bottom - text_top
-    if left_pad < 24 or left_pad > 58 or right_pad < 18 or right_pad > 70:
+    if left_pad < 30 or left_pad > 46 or right_pad < 18:
         return {
             "required": True,
             "ok": False,
             "reason": (
-                f"top hook card padding left={left_pad}, right={right_pad} is not content-hugging like the reference"
+                f"top hook card padding left={left_pad}, right={right_pad} does not match reference-width card spacing"
             ),
             "bbox": [left, top, right, bottom],
             "text_bbox": [text_left, min(text_ys), text_right, max(text_ys) + 1],

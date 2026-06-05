@@ -154,10 +154,10 @@ def top_hook_font(size: int) -> ImageFont.ImageFont:
 
 def top_hook_card_font(size: int) -> ImageFont.ImageFont:
     candidates: List[tuple[Path, str | None, int | None]] = [
+        (FONT_DIR / "TikTokSans36pt-Bold.ttf", None, None),
         (FONT_DIR / "TikTokSans36pt-SemiBold.ttf", None, None),
         (Path("/System/Library/Fonts/Avenir Next.ttc"), None, 2),
         (Path("/System/Library/Fonts/SFNS.ttf"), "Semibold", None),
-        (FONT_DIR / "TikTokSans36pt-Bold.ttf", None, None),
         (FONT_DIR / "TikTokSans36pt-ExtraBold.ttf", None, None),
         (FONT_DIR / "TikTokSans36pt-Black.ttf", None, None),
         (Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"), None, None),
@@ -266,14 +266,16 @@ def draw_mixed_text_visual_top(
     fill: tuple[int, int, int, int],
 ) -> None:
     x = left
+    emoji_y_offset = -5
     for is_emoji, run_text in mixed_text_runs(text):
         run_font = emoji_font if is_emoji and emoji_font is not None else style_font
         bbox = draw.textbbox((0, 0), run_text, font=run_font)
         if is_emoji and emoji_font is not None:
+            emoji_top = top + emoji_y_offset
             try:
-                draw.text((x - bbox[0], top - bbox[1]), run_text, font=run_font, embedded_color=True)
+                draw.text((x - bbox[0], emoji_top - bbox[1]), run_text, font=run_font, embedded_color=True)
             except TypeError:
-                draw.text((x - bbox[0], top - bbox[1]), run_text, font=run_font, fill=fill)
+                draw.text((x - bbox[0], emoji_top - bbox[1]), run_text, font=run_font, fill=fill)
         else:
             draw.text((x - bbox[0], top - bbox[1]), run_text, font=run_font, fill=fill)
         x += bbox[2] - bbox[0]
@@ -1007,10 +1009,10 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     card_top = 224
     text_top = 238
     text_max_width = 550
-    title_font = top_hook_card_font(35)
+    title_font = top_hook_card_font(34)
     emoji_font = top_hook_emoji_font(40)
     lines: List[str] = []
-    for font_size in (35, 34, 33, 32, 31, 30, 29, 28):
+    for font_size in (34, 33, 32, 31, 30, 29, 28):
         candidate_font = top_hook_card_font(font_size)
         candidate_emoji_font = top_hook_emoji_font(40)
         candidate_lines = _reference_top_hook_lines(draw, hook, candidate_font, candidate_emoji_font, text_max_width)
@@ -1030,9 +1032,10 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         return ""
     line_heights = [mixed_text_size(draw, line, title_font, emoji_font)[1] for line in lines]
     line_widths = [mixed_text_size(draw, line, title_font, emoji_font)[0] for line in lines]
-    # The TikTok white text-card reference reaches the max card width on
-    # long two-line hooks, while shorter hooks still hug their text.
-    if len(lines) == 2 and max(line_widths) >= 530:
+    # The TikTok white text-card reference uses one stable, wide card for
+    # normal two-line hooks. Letting each title shrink to its own text width
+    # made the top card read like a custom overlay instead of the native card.
+    if len(lines) == 2:
         card_width = max_card_width
     else:
         card_width = min(max_card_width, max(347, max(line_widths) + 47))
@@ -1040,7 +1043,7 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     text_left = card_left + 23
     gap = 10
     text_block_height = sum(line_heights) + max(0, len(line_heights) - 1) * gap
-    card_height = max(64, min(105, text_block_height + 23))
+    card_height = max(64, min(105, text_block_height + 16))
     draw.rounded_rectangle(
         (card_left + 2, card_top + 3, card_left + card_width + 2, card_top + card_height + 3),
         radius=14,
