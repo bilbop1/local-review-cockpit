@@ -1059,6 +1059,10 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         draw_mixed_text_visual_top(draw, line, text_left, y, title_font, emoji_font, (7, 7, 7, 255))
         y += line_height + gap
     image = logical.resize((1080, 1920), Image.Resampling.LANCZOS)
+    # The TikTok reference card is a compressed platform overlay, not a
+    # razor-crisp native app layer. A tiny post-resize softening keeps the
+    # same geometry while matching that optical edge quality more closely.
+    image = image.resize((540, 960), Image.Resampling.BICUBIC).resize((1080, 1920), Image.Resampling.BICUBIC)
     image.save(path)
     return hook
 
