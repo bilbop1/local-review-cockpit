@@ -1065,10 +1065,10 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     # source-scale coordinate system and upscale the transparent overlay.
     logical = Image.new("RGBA", (720, 1280), (0, 0, 0, 0))
     draw = ImageDraw.Draw(logical, "RGBA")
-    max_card_width = 588
-    card_top = 224
+    max_card_width = 587
+    card_top = 223
     text_top = 237
-    text_max_width = 550
+    text_max_width = 548
     title_font = top_hook_card_font(34)
     emoji_font = top_hook_emoji_font(40)
     lines: List[str] = []
@@ -1090,7 +1090,7 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     if not lines:
         image.save(path)
         return ""
-    text_fill = (7, 7, 7, 255)
+    text_fill = (0, 0, 0, 255)
     line_heights = [mixed_text_size(draw, line, title_font, emoji_font)[1] for line in lines]
     visual_line_widths = [mixed_text_visual_width(line, title_font, emoji_font, text_fill) for line in lines]
     # The TikTok reference hugs the text block with consistent left/right
@@ -1101,7 +1101,7 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     else:
         card_width = min(max_card_width, max(330, max(visual_line_widths) + 46))
     card_left = int(round((720 - card_width) / 2))
-    text_left = card_left + 22
+    text_left = card_left + 21
     gap = 10
     text_block_height = sum(line_heights) + max(0, len(line_heights) - 1) * gap
     card_height = max(64, min(105, text_block_height + 16))
@@ -1120,7 +1120,7 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         draw_mixed_text_visual_top(draw, line, text_left, y, title_font, emoji_font, text_fill)
         y += line_height + gap
     image = logical.resize((1080, 1920), Image.Resampling.LANCZOS)
-    image = stretch_visible_overlay_y(image, 1.034)
+    image = stretch_visible_overlay_y(image, 1.052)
     image.save(path)
     return hook
 

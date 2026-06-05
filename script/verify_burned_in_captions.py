@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = ROOT / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from clipping_ops_backend import database as db
 from clipping_ops_backend.caption_style import (
@@ -25,6 +27,7 @@ from clipping_ops_backend.caption_style import (
     caption_display_window_seconds,
     caption_text_quality_violations,
 )
+from script.audit_top_card_reference import measure_overlay
 
 OUT_DIR = ROOT / "artifacts" / "review-kit-audit" / "burned-caption-frames"
 SUMMARY_PATH = ROOT / "artifacts" / "review-kit-audit" / "burned-caption-verification.json"
@@ -210,64 +213,33 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
     if not title_card.exists():
         return {"required": True, "ok": False, "reason": "title_card.png missing"}
     title_image = Image.open(title_card).convert("RGBA")
-    alpha = title_image.getchannel("A")
-    alpha_pixels = alpha.load()
-    solid_points: List[tuple[int, int]] = []
-    for y in range(title_image.height):
-        for x in range(title_image.width):
-            if alpha_pixels[x, y] >= 80:
-                solid_points.append((x, y))
-    bbox = None
-    if solid_points:
-        xs = [point[0] for point in solid_points]
-        ys = [point[1] for point in solid_points]
-        bbox = (min(xs), min(ys), max(xs) + 1, max(ys) + 1)
-    if not bbox:
-        return {"required": True, "ok": False, "reason": "title_card.png has no visible pixels"}
-    left, top, right, bottom = bbox
-    width = right - left
-    height = bottom - top
-    center_x = (left + right) / 2
-    if abs(center_x - 541.5) > 8 or top < 330 or top > 342 or height < 138 or height > 166 or width < 610 or width > 895:
+    try:
+        metrics = measure_overlay(title_image)
+    except Exception as exc:
+        return {"required": True, "ok": False, "reason": f"title_card.png has no measurable white card: {exc}"}
+    left, top, right, bottom = metrics["card_bbox"]
+    width = metrics["card_width"]
+    height = metrics["card_height"]
+    center_x = metrics["card_center_x"]
+    if abs(center_x - 540) > 4 or top < 335 or top > 337 or height < 150 or height > 160 or width < 610 or width > 883:
         return {
             "required": True,
             "ok": False,
             "reason": (
                 f"top hook bbox {left},{top},{right},{bottom} does not match reference band "
-                "centered at x 540, y=336, adaptive width 610-895, height 138-166 with shadow"
+                "centered at x 540, y=336, adaptive white-card width 610-883, height 150-160"
             ),
             "bbox": [left, top, right, bottom],
             "width": width,
             "height": height,
         }
-    pixels = title_image.load()
-    text_xs: List[int] = []
-    text_ys: List[int] = []
-    for y in range(top + 4, bottom - 4):
-        for x in range(left + 4, right - 4):
-            r, g, b, a = pixels[x, y]
-            if a < 180:
-                continue
-            if r > 245 and g > 245 and b > 245:
-                continue
-            is_dark_text = max(r, g, b) < 112 and max(r, g, b) - min(r, g, b) < 72
-            is_color_emoji = max(r, g, b) >= 120 and max(r, g, b) - min(r, g, b) >= 50
-            if not (is_dark_text or is_color_emoji):
-                continue
-            text_xs.append(x)
-            text_ys.append(y)
-    if not text_xs:
-        return {"required": True, "ok": False, "reason": "top hook card has no measurable text pixels", "bbox": [left, top, right, bottom]}
-    text_left = min(text_xs)
-    text_right = max(text_xs) + 1
-    text_top = min(text_ys)
-    text_bottom = max(text_ys) + 1
-    left_pad = text_left - left
-    right_pad = right - text_right
-    top_pad = text_top - top
-    bottom_pad = bottom - text_bottom
-    content_height = text_bottom - text_top
-    if left_pad < 32 or left_pad > 40 or right_pad < 30 or right_pad > 78:
+    text_left, text_top, text_right, text_bottom = metrics["text_bbox"]
+    left_pad = metrics["left_pad"]
+    right_pad = metrics["right_pad"]
+    top_pad = metrics["top_pad"]
+    bottom_pad = metrics["bottom_pad"]
+    content_height = metrics["text_height"]
+    if left_pad < 32 or left_pad > 36 or right_pad < 30 or right_pad > 42:
         return {
             "required": True,
             "ok": False,
@@ -279,7 +251,7 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
             "left_pad": left_pad,
             "right_pad": right_pad,
         }
-    if top_pad < 16 or top_pad > 24 or bottom_pad < 12 or bottom_pad > 32 or content_height < 96 or content_height > 134:
+    if top_pad < 20 or top_pad > 23 or bottom_pad < 13 or bottom_pad > 16 or content_height < 120 or content_height > 123:
         return {
             "required": True,
             "ok": False,

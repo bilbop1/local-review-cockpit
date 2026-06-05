@@ -232,16 +232,17 @@ class BackendSmokeTests(unittest.TestCase):
             )
             self.assertIn("green screening", hook)
             metrics = measure_overlay(Image.open(path).convert("RGBA"))
-            self.assertGreaterEqual(metrics["card_width"], 875)
-            self.assertLessEqual(metrics["card_width"], 895)
-            self.assertGreaterEqual(metrics["card_height"], 153)
+            self.assertGreaterEqual(metrics["card_width"], 879)
+            self.assertLessEqual(metrics["card_width"], 883)
+            self.assertGreaterEqual(metrics["card_height"], 156)
             self.assertLessEqual(metrics["card_height"], 158)
-            self.assertGreaterEqual(metrics["text_height"], 116)
-            self.assertLessEqual(metrics["text_height"], 122)
-            self.assertGreaterEqual(metrics["left_pad"], 34)
-            self.assertLessEqual(metrics["left_pad"], 38)
-            self.assertGreaterEqual(metrics["right_pad"], 33)
-            self.assertLess(abs(metrics["card_center_x"] - 540), 4)
+            self.assertGreaterEqual(metrics["text_height"], 120)
+            self.assertLessEqual(metrics["text_height"], 123)
+            self.assertGreaterEqual(metrics["left_pad"], 33)
+            self.assertLessEqual(metrics["left_pad"], 35)
+            self.assertGreaterEqual(metrics["right_pad"], 31)
+            self.assertLessEqual(metrics["right_pad"], 34)
+            self.assertLess(abs(metrics["card_center_x"] - 540), 2)
 
     def test_short_two_line_top_hook_hugs_visible_text_with_reference_padding(self):
         from PIL import Image
@@ -262,8 +263,8 @@ class BackendSmokeTests(unittest.TestCase):
             metrics = measure_overlay(Image.open(path).convert("RGBA"))
             self.assertGreaterEqual(metrics["card_width"], 610)
             self.assertLessEqual(metrics["card_width"], 645)
-            self.assertGreaterEqual(metrics["left_pad"], 34)
-            self.assertLessEqual(metrics["left_pad"], 38)
+            self.assertGreaterEqual(metrics["left_pad"], 33)
+            self.assertLessEqual(metrics["left_pad"], 36)
             self.assertLess(abs(metrics["card_center_x"] - 540), 4)
 
     def test_top_hook_does_not_append_fake_stream_suffix(self):

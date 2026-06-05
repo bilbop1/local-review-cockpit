@@ -51,17 +51,24 @@ def measure_reference(image: Image.Image) -> Dict[str, Any]:
 
 def measure_overlay(image: Image.Image) -> Dict[str, Any]:
     rgba = image.convert("RGBA")
-    alpha = rgba.getchannel("A")
-    alpha_pixels = alpha.load()
-    points = []
+    pixels = rgba.load()
+    white_points = []
+    shadow_points = []
     for y in range(rgba.height):
         for x in range(rgba.width):
-            if alpha_pixels[x, y] >= 80:
-                points.append((x, y))
-    card = bbox(points)
+            r, g, b, a = pixels[x, y]
+            if a >= 80:
+                shadow_points.append((x, y))
+            if a >= 170 and r >= 245 and g >= 245 and b >= 245:
+                white_points.append((x, y))
+    card = bbox(white_points)
     if not card:
-        raise RuntimeError("production top card overlay has no visible pixels")
-    return measure_text_in_region(rgba, card, alpha_required=True, white_threshold=False)
+        raise RuntimeError("production top card overlay has no white card pixels")
+    metrics = measure_text_in_region(rgba, card, alpha_required=True, white_threshold=False)
+    shadow = bbox(shadow_points)
+    if shadow:
+        metrics["shadow_bbox"] = shadow
+    return metrics
 
 
 def measure_text_in_region(image: Image.Image, card: list[int], *, alpha_required: bool, white_threshold: bool) -> Dict[str, Any]:
@@ -123,18 +130,18 @@ def compare(reference: Dict[str, Any], production: Dict[str, Any]) -> Dict[str, 
             }
         )
 
-    add("card_center_x", production["card_center_x"], reference["card_center_x"], 16)
-    add("card_top", production["card_bbox"][1], reference["card_bbox"][1], 8)
-    add("card_width", production["card_width"], reference["card_width"], 16)
-    add("card_height", production["card_height"], reference["card_height"], 18)
-    add("text_left", production["text_bbox"][0], reference["text_bbox"][0], 12)
-    add("text_top", production["text_bbox"][1], reference["text_bbox"][1], 8)
-    add("text_width", production["text_width"], reference["text_width"], 24)
-    add("text_height", production["text_height"], reference["text_height"], 8)
-    add("top_pad", production["top_pad"], reference["top_pad"], 10)
-    add("bottom_pad", production["bottom_pad"], reference["bottom_pad"], 5)
-    add("right_pad", production["right_pad"], reference["right_pad"], 14)
-    add("text_density", production["text_density"], reference["text_density"], 0.04)
+    add("card_center_x", production["card_center_x"], reference["card_center_x"], 3)
+    add("card_top", production["card_bbox"][1], reference["card_bbox"][1], 0)
+    add("card_width", production["card_width"], reference["card_width"], 3)
+    add("card_height", production["card_height"], reference["card_height"], 1)
+    add("text_left", production["text_bbox"][0], reference["text_bbox"][0], 2)
+    add("text_top", production["text_bbox"][1], reference["text_bbox"][1], 1)
+    add("text_width", production["text_width"], reference["text_width"], 3)
+    add("text_height", production["text_height"], reference["text_height"], 2)
+    add("top_pad", production["top_pad"], reference["top_pad"], 1)
+    add("bottom_pad", production["bottom_pad"], reference["bottom_pad"], 1)
+    add("right_pad", production["right_pad"], reference["right_pad"], 2)
+    add("text_density", production["text_density"], reference["text_density"], 0.006)
     return {"ok": all(check["ok"] for check in checks), "checks": checks}
 
 
