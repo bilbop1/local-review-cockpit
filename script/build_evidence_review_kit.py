@@ -281,6 +281,22 @@ def draw_mixed_text_visual_top(
         x += bbox[2] - bbox[0]
 
 
+def stretch_visible_overlay_y(image: Image.Image, scale_y: float) -> Image.Image:
+    if scale_y == 1.0:
+        return image
+    alpha = image.getchannel("A")
+    bbox = alpha.getbbox()
+    if not bbox:
+        return image
+    left, top, right, bottom = bbox
+    cropped = image.crop((left, top, right, bottom))
+    new_height = max(1, int(round((bottom - top) * scale_y)))
+    stretched = cropped.resize((right - left, new_height), Image.Resampling.BICUBIC)
+    output = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    output.paste(stretched, (left, top), stretched)
+    return output
+
+
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -1059,6 +1075,7 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         draw_mixed_text_visual_top(draw, line, text_left, y, title_font, emoji_font, (7, 7, 7, 255))
         y += line_height + gap
     image = logical.resize((1080, 1920), Image.Resampling.LANCZOS)
+    image = stretch_visible_overlay_y(image, 1.015)
     # The TikTok reference card is a compressed platform overlay, not a
     # razor-crisp native app layer. A tiny post-resize softening keeps the
     # same geometry while matching that optical edge quality more closely.

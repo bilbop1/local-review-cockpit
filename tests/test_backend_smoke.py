@@ -225,11 +225,19 @@ class BackendSmokeTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "title_card.png"
-            hook = module.headline_card(path, "Jason got tired of fake rumor math", "jasontheween")
-            self.assertIn("fake rumor math", hook)
+            hook = module.headline_card(
+                path,
+                "Max got tired of Jason and Silky green screening his stream",
+                "max",
+            )
+            self.assertIn("green screening", hook)
             metrics = measure_overlay(Image.open(path).convert("RGBA"))
             self.assertGreaterEqual(metrics["card_width"], 875)
             self.assertLessEqual(metrics["card_width"], 895)
+            self.assertGreaterEqual(metrics["card_height"], 153)
+            self.assertLessEqual(metrics["card_height"], 158)
+            self.assertGreaterEqual(metrics["text_height"], 116)
+            self.assertLessEqual(metrics["text_height"], 122)
             self.assertLess(abs(metrics["card_center_x"] - 540), 4)
 
     def test_top_hook_does_not_append_fake_stream_suffix(self):
