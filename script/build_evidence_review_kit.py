@@ -154,9 +154,11 @@ def top_hook_font(size: int) -> ImageFont.ImageFont:
 
 def top_hook_card_font(size: int) -> ImageFont.ImageFont:
     for candidate in [
-        Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+        FONT_DIR / "TikTokSans36pt-SemiBold.ttf",
+        FONT_DIR / "TikTokSans36pt-Bold.ttf",
         FONT_DIR / "TikTokSans36pt-ExtraBold.ttf",
         FONT_DIR / "TikTokSans36pt-Black.ttf",
+        Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
         Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
     ]:
         if candidate.exists():

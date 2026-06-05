@@ -184,6 +184,18 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertAlmostEqual(beats[0]["start"], 1.0 + CAPTION_AUDIO_SYNC_DELAY_SECONDS, places=3)
         self.assertAlmostEqual(beats[0]["audio_sync_delay_seconds"], CAPTION_AUDIO_SYNC_DELAY_SECONDS, places=3)
 
+    def test_top_hook_card_uses_tiktok_semibold_source_space(self):
+        module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"
+        spec = importlib.util.spec_from_file_location("build_evidence_review_kit_for_top_hook_test", module_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["build_evidence_review_kit_for_top_hook_test"] = module
+        spec.loader.exec_module(module)
+
+        font_name = module.top_hook_card_font(35).getname()
+        self.assertEqual(font_name, ("TikTok Sans", "SemiBold"))
+
     def test_caption_timing_cleaner_drops_vtt_boundary_slivers(self):
         words = [
             {"word": "It's", "start": 0.0, "end": 0.02},
