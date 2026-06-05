@@ -280,14 +280,17 @@ Current renderer rules:
 - The verifier must pass `script/verify_burned_in_captions.py`; sidecar text alone does not prove visible subtitles.
 - Any future caption timing changes must be validated against video pixels and audio, not just JSON.
 
-Production A/B variants:
+Production subtitle variant:
+
+- Default review-kit style: B, white TikTok Sans with yellow emphasis on the second word.
+
+Keep campaign review kits on this single style unless the operator explicitly starts an analytics experiment. Optional experiment variants:
 
 - A: white TikTok Sans with black stroke.
-- B: yellow emphasis on the second word.
 - D: white caption card with black text.
 - E: white caption with cyan underline/accent.
 
-Variant C is excluded.
+Variant C is excluded. Mixed variants are not a parity-ready default.
 
 ## Review Workflow
 

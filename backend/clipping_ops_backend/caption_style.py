@@ -18,6 +18,7 @@ CAPTION_VERTICAL_CENTER_Y = 1184
 CAPTION_MIN_CENTER_Y = CAPTION_SAFE_BAND_TOP_Y + 36
 CAPTION_MAX_CENTER_Y = CAPTION_SAFE_BAND_BOTTOM_Y - 36
 PRODUCTION_CAPTION_VARIANTS = ("A", "B", "D", "E")
+DEFAULT_CAMPAIGN_CAPTION_VARIANT = "B"
 CAPTION_MIN_WORD_DURATION = 0.06
 CAPTION_MIN_VTT_WORD_DURATION = 0.12
 CAPTION_SINGLE_WORD_WINDOW_SECONDS = 0.44
@@ -64,6 +65,7 @@ def caption_style_manifest() -> Dict[str, Any]:
         "max_lines_per_caption": CAPTION_MAX_LINES,
         "max_words_on_screen": CAPTION_MAX_WORDS_PER_LINE,
         "production_ab_variants": list(PRODUCTION_CAPTION_VARIANTS),
+        "default_campaign_variant": DEFAULT_CAMPAIGN_CAPTION_VARIANT,
         "vertical_center_y": CAPTION_VERTICAL_CENTER_Y,
         "safe_band_top_y": CAPTION_SAFE_BAND_TOP_Y,
         "safe_band_bottom_y": CAPTION_SAFE_BAND_BOTTOM_Y,

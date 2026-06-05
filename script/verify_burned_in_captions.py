@@ -20,6 +20,7 @@ from clipping_ops_backend.caption_style import (
     CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS,
     CAPTION_SAFE_BAND_BOTTOM_Y,
     CAPTION_SAFE_BAND_TOP_Y,
+    DEFAULT_CAMPAIGN_CAPTION_VARIANT,
     caption_display_window_seconds,
     caption_text_quality_violations,
 )
@@ -384,6 +385,30 @@ def reference_watermark_check(kit_dir: Path) -> Dict[str, Any]:
     }
 
 
+def campaign_caption_variant_check(kit_dir: Path) -> Dict[str, Any]:
+    manifest_path = kit_dir / "render_text_manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"required": True, "ok": False, "reason": f"render_text_manifest.json unreadable for caption variant audit: {exc}"}
+    rendered = payload.get("rendered_text", {})
+    layout = str(rendered.get("layout", "") if isinstance(rendered, dict) else "").strip().lower()
+    profile = str(payload.get("profile", "")).strip()
+    required = profile == db.CAMPAIGN_SHORT_PROFILE or layout == "summary_hook_caption"
+    if not required:
+        return {"required": False, "ok": True}
+    style = rendered.get("caption_style", {}) if isinstance(rendered, dict) else {}
+    variant = str(style.get("ab_variant", "") if isinstance(style, dict) else "").strip().upper()
+    ok = variant == DEFAULT_CAMPAIGN_CAPTION_VARIANT
+    return {
+        "required": True,
+        "ok": ok,
+        "variant": variant,
+        "expected_variant": DEFAULT_CAMPAIGN_CAPTION_VARIANT,
+        "reason": "" if ok else f"campaign final uses caption variant {variant!r}; expected unified default {DEFAULT_CAMPAIGN_CAPTION_VARIANT!r}",
+    }
+
+
 def verify_kit(row: Dict[str, Any]) -> Dict[str, Any]:
     kit_dir = Path(str(row["review_video_path"])).parent
     video = kit_dir / "review.mp4"
@@ -434,6 +459,7 @@ def verify_kit(row: Dict[str, Any]) -> Dict[str, Any]:
     hook_check = top_hook_check(kit_dir, video)
     layout_check = reference_layout_check(kit_dir)
     watermark_check = reference_watermark_check(kit_dir)
+    variant_check = campaign_caption_variant_check(kit_dir)
     return {
         "kit_id": row.get("id", ""),
         "title": row.get("title", ""),
@@ -446,12 +472,14 @@ def verify_kit(row: Dict[str, Any]) -> Dict[str, Any]:
         "top_hook_check": hook_check,
         "reference_layout_check": layout_check,
         "reference_watermark_check": watermark_check,
+        "campaign_caption_variant_check": variant_check,
         "ok": bool(
             required
             and ok_count >= required
             and hook_check.get("ok")
             and layout_check.get("ok")
             and watermark_check.get("ok")
+            and variant_check.get("ok")
             and not timing_violations
             and not text_violations
         ),

@@ -94,6 +94,7 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertEqual(manifest["max_lines_per_caption"], 1)
         self.assertEqual(manifest["max_words_on_screen"], 2)
         self.assertEqual(manifest["production_ab_variants"], ["A", "B", "D", "E"])
+        self.assertEqual(manifest["default_campaign_variant"], "B")
         self.assertNotIn("C", manifest["production_ab_variants"])
         self.assertEqual(manifest["safe_band_top_y"], 1128)
         self.assertEqual(manifest["safe_band_bottom_y"], 1235)

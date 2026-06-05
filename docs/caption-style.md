@@ -54,16 +54,19 @@ These constraints intentionally create faster beat timing. That is expected. The
 - Kalshi and Dunkman remain archived/non-primary for this source-clone lane.
 - The incoming Codex book in `docs/CODEX_HANDOFF_BOOK.md` contains the full campaign and operating rules.
 
-## A/B Variants
+## Subtitle Variant
 
-Production review renders rotate only these text treatments:
+Production review renders default to one unified subtitle treatment:
+
+- B: white TikTok Sans with yellow emphasis on the second word.
+
+This is the normal review-kit style. It keeps all campaign review videos visually coherent. The other treatments remain available only for explicit analytics experiments:
 
 - A: clean white TikTok Sans with black stroke.
-- B: yellow emphasis on the second word.
 - D: white caption card with black text.
 - E: white caption with cyan underline/accent.
 
-Variant C is excluded from production testing. Every rendered kit writes its selected variant into `render_text_manifest.json` under `rendered_text.caption_style.ab_variant`, so later analytics or review polling can compare outcomes without guessing from pixels.
+Variant C is excluded from production testing. Every rendered kit writes its selected variant into `render_text_manifest.json` under `rendered_text.caption_style.ab_variant`, so later analytics or review polling can compare outcomes without guessing from pixels. A default review-kit render should report variant `B`; mixed A/D/E variants should appear only after an explicit experiment rerender.
 
 ## Handoff Rule
 

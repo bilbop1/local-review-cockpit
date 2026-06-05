@@ -28,6 +28,7 @@ from clipping_ops_backend.caption_style import (
     CAPTION_MAX_WORDS_PER_LINE,
     CAPTION_TARGET_MAX_LINE_CHARS,
     CAPTION_MAX_CENTER_Y,
+    DEFAULT_CAMPAIGN_CAPTION_VARIANT,
     FONT_DIR,
     apply_caption_audio_sync_delay,
     caption_variant_for_key,
@@ -1634,7 +1635,10 @@ def render_review_video(
     source_width, source_height = source_dimensions(media_path)
     composition = streamer_composition_plan(media_path, kit_dir, platform, source_width, source_height)
     caption_center_y = caption_center_y_for_source(source_width, source_height)
-    caption_variant = normalize_caption_variant(caption_variant or caption_variant_for_key(clip_id or title))
+    if caption_only_profile:
+        caption_variant = normalize_caption_variant(caption_variant or DEFAULT_CAMPAIGN_CAPTION_VARIANT)
+    else:
+        caption_variant = normalize_caption_variant(caption_variant or caption_variant_for_key(clip_id or title))
     caption_paths: List[Path] = []
     for index, beat in enumerate(beats, start=1):
         path = kit_dir / f"caption_{index}.png"
