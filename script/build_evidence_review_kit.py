@@ -727,18 +727,18 @@ HOOK_OVERRIDES = {
     "clip_aaad914f4538": "Lacy heard Savage CRASHED in last place",
     "clip_a1e493aa552b": "Lacy watched them climb before security came",
     "clip_42cbaa5686b0": "Lacy realized he's HIM mid-clip",
-    "clip_82ec1decd290": "YourRAGE locked onto one messy detail on stream",
-    "clip_3b0737d91f70": "Jason's chat caught one word that sounded dangerous",
-    "clip_0b33758d13dd": "Jason tried explaining why the rumors were fake",
-    "clip_b200319459a7": "Jason's stream turned chaotic when everyone started panicking",
-    "clip_9ab0d5a77ced": "Emily's comeback story somehow turned into free Chipotle",
+    "clip_82ec1decd290": "YourRAGE got stuck repeating the same line",
+    "clip_3b0737d91f70": "Jason heard chat say something way too risky",
+    "clip_0b33758d13dd": "Jason got tired of fake rumor math",
+    "clip_b200319459a7": "Jason saw something coming from the hill and panicked",
+    "clip_9ab0d5a77ced": "Emily came back and somehow won free Chipotle",
     "clip_e31cf9a9ec51": "Max got Lucki talking about turning thirty",
-    "clip_76572c1f77a8": "Max showed the haircut chat would not stop roasting",
-    "clip_58fa65245afb": "Max realized the song already had his stream in it",
-    "clip_5663dce40340": "YourRAGE tried dodging the Agent and Emily jokes",
-    "clip_c34ba7160d61": "YourRAGE imagined exactly how Agent would dance",
-    "clip_3c2685fa51d2": "Jason tested the windup and instantly paid for it",
-    "clip_114cbd99f552": "Jason had to explain the follower argument calmly",
+    "clip_76572c1f77a8": "Max got roasted for his fresh barrel twists",
+    "clip_58fa65245afb": "Max realized the song was already about his stream",
+    "clip_5663dce40340": "YourRAGE got tired of the Agent and Emily jokes",
+    "clip_c34ba7160d61": "YourRAGE pictured Agent dancing exactly like this",
+    "clip_3c2685fa51d2": "Jason tried the windup and instantly regretted it",
+    "clip_114cbd99f552": "Jason had to explain why his friend was there",
 }
 
 MIN_CAPTION_BEAT_DURATION = 0.16
@@ -991,19 +991,21 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         return ""
     draw = ImageDraw.Draw(image, "RGBA")
     hook = reference_top_hook_text(viewer_hook(title, handle, transcript_text=transcript_text, clip_id=clip_id))
-    card_left = 84
+    # Match the TikTok reference hook card after scaling the 720x1280 source
+    # to the app's 1080x1920 render target. The native text background hugs
+    # the longest line; the reference reaches this maximum width because its
+    # hook is long.
+    max_card_width = 881
     card_top = 336
-    card_width = 896
     card_height = 157
-    text_left = 134
     text_top = 356
-    text_max_width = 840
-    title_font = top_hook_card_font(52)
+    text_max_width = 811
+    title_font = top_hook_card_font(48)
     emoji_font = top_hook_emoji_font(64)
     lines: List[str] = []
-    for font_size in (52, 50, 48, 46, 44, 42, 40):
+    for font_size in (48, 46, 44, 42, 40):
         candidate_font = top_hook_card_font(font_size)
-        candidate_emoji_font = top_hook_emoji_font(64 if font_size >= 50 else 52)
+        candidate_emoji_font = top_hook_emoji_font(64 if font_size >= 48 else 52)
         candidate_lines = _reference_top_hook_lines(draw, hook, candidate_font, candidate_emoji_font, text_max_width)
         widths = [mixed_text_size(draw, line, candidate_font, candidate_emoji_font)[0] for line in candidate_lines]
         same_text = " ".join(candidate_lines).strip() == hook
@@ -1020,7 +1022,11 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         image.save(path)
         return ""
     line_heights = [mixed_text_size(draw, line, title_font, emoji_font)[1] for line in lines]
-    gap = 12
+    line_widths = [mixed_text_size(draw, line, title_font, emoji_font)[0] for line in lines]
+    card_width = min(max_card_width, max(520, max(line_widths) + 70))
+    card_left = int(round((1080 - card_width) / 2))
+    text_left = card_left + 35
+    gap = 8
     draw.rounded_rectangle(
         (card_left + 3, card_top + 4, card_left + card_width + 3, card_top + card_height + 4),
         radius=13,

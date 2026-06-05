@@ -207,24 +207,56 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
     title_card = kit_dir / "title_card.png"
     if not title_card.exists():
         return {"required": True, "ok": False, "reason": "title_card.png missing"}
-    alpha = Image.open(title_card).convert("RGBA").getchannel("A")
+    title_image = Image.open(title_card).convert("RGBA")
+    alpha = title_image.getchannel("A")
     bbox = alpha.getbbox()
     if not bbox:
         return {"required": True, "ok": False, "reason": "title_card.png has no visible pixels"}
     left, top, right, bottom = bbox
     width = right - left
     height = bottom - top
-    if left < 78 or left > 90 or top < 330 or top > 342 or right < 980 or right > 990 or bottom < 492 or bottom > 505 or width < 895 or width > 910:
+    center_x = (left + right) / 2
+    if abs(center_x - 541.5) > 8 or top < 330 or top > 342 or bottom < 492 or bottom > 502 or width < 520 or width > 890:
         return {
             "required": True,
             "ok": False,
             "reason": (
                 f"top hook bbox {left},{top},{right},{bottom} does not match reference band "
-                "x 84/984, y 336/498, width 900, height 162 with shadow"
+                "centered at x 540, y 336/498, content-hugging width 520-890 with shadow"
             ),
             "bbox": [left, top, right, bottom],
             "width": width,
             "height": height,
+        }
+    pixels = title_image.load()
+    text_xs: List[int] = []
+    text_ys: List[int] = []
+    for y in range(top + 4, bottom - 4):
+        for x in range(left + 4, right - 4):
+            r, g, b, a = pixels[x, y]
+            if a < 180:
+                continue
+            if r > 245 and g > 245 and b > 245:
+                continue
+            text_xs.append(x)
+            text_ys.append(y)
+    if not text_xs:
+        return {"required": True, "ok": False, "reason": "top hook card has no measurable text pixels", "bbox": [left, top, right, bottom]}
+    text_left = min(text_xs)
+    text_right = max(text_xs) + 1
+    left_pad = text_left - left
+    right_pad = right - text_right
+    if left_pad < 24 or left_pad > 58 or right_pad < 18 or right_pad > 70:
+        return {
+            "required": True,
+            "ok": False,
+            "reason": (
+                f"top hook card padding left={left_pad}, right={right_pad} is not content-hugging like the reference"
+            ),
+            "bbox": [left, top, right, bottom],
+            "text_bbox": [text_left, min(text_ys), text_right, max(text_ys) + 1],
+            "left_pad": left_pad,
+            "right_pad": right_pad,
         }
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     frame = OUT_DIR / f"{kit_dir.name}-top-hook.jpg"
@@ -251,6 +283,9 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
         "hook": hook,
         "overlay_pixel_match_ratio": round(ratio, 3),
         "bbox": [left, top, right, bottom],
+        "text_bbox": [text_left, min(text_ys), text_right, max(text_ys) + 1],
+        "left_pad": left_pad,
+        "right_pad": right_pad,
         "frame": str(frame),
         "overlay": str(title_card),
     }
