@@ -153,19 +153,21 @@ def top_hook_font(size: int) -> ImageFont.ImageFont:
 
 
 def top_hook_card_font(size: int) -> ImageFont.ImageFont:
-    candidates: List[tuple[Path, str | None]] = [
-        (Path("/System/Library/Fonts/SFNS.ttf"), "Semibold"),
-        (FONT_DIR / "TikTokSans36pt-SemiBold.ttf", None),
-        (FONT_DIR / "TikTokSans36pt-Bold.ttf", None),
-        (FONT_DIR / "TikTokSans36pt-ExtraBold.ttf", None),
-        (FONT_DIR / "TikTokSans36pt-Black.ttf", None),
-        (Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"), None),
-        (Path("/System/Library/Fonts/Supplemental/Arial.ttf"), None),
+    candidates: List[tuple[Path, str | None, int | None]] = [
+        (FONT_DIR / "TikTokSans36pt-SemiBold.ttf", None, None),
+        (Path("/System/Library/Fonts/Avenir Next.ttc"), None, 2),
+        (Path("/System/Library/Fonts/SFNS.ttf"), "Semibold", None),
+        (FONT_DIR / "TikTokSans36pt-Bold.ttf", None, None),
+        (FONT_DIR / "TikTokSans36pt-ExtraBold.ttf", None, None),
+        (FONT_DIR / "TikTokSans36pt-Black.ttf", None, None),
+        (Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"), None, None),
+        (Path("/System/Library/Fonts/Supplemental/Arial.ttf"), None, None),
     ]
-    for candidate, variation_name in candidates:
+    for candidate, variation_name, collection_index in candidates:
         if candidate.exists():
             try:
-                loaded = ImageFont.truetype(str(candidate), size=size)
+                kwargs = {"index": collection_index} if collection_index is not None else {}
+                loaded = ImageFont.truetype(str(candidate), size=size, **kwargs)
                 if variation_name:
                     loaded.set_variation_by_name(variation_name)
                 return loaded
@@ -1004,11 +1006,11 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     max_card_width = 588
     card_top = 224
     text_top = 238
-    text_max_width = 546
-    title_font = top_hook_card_font(38)
+    text_max_width = 550
+    title_font = top_hook_card_font(35)
     emoji_font = top_hook_emoji_font(40)
     lines: List[str] = []
-    for font_size in (38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28):
+    for font_size in (35, 34, 33, 32, 31, 30, 29, 28):
         candidate_font = top_hook_card_font(font_size)
         candidate_emoji_font = top_hook_emoji_font(40)
         candidate_lines = _reference_top_hook_lines(draw, hook, candidate_font, candidate_emoji_font, text_max_width)
@@ -1028,7 +1030,12 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         return ""
     line_heights = [mixed_text_size(draw, line, title_font, emoji_font)[1] for line in lines]
     line_widths = [mixed_text_size(draw, line, title_font, emoji_font)[0] for line in lines]
-    card_width = min(max_card_width, max(347, max(line_widths) + 47))
+    # The TikTok white text-card reference reaches the max card width on
+    # long two-line hooks, while shorter hooks still hug their text.
+    if len(lines) == 2 and max(line_widths) >= 530:
+        card_width = max_card_width
+    else:
+        card_width = min(max_card_width, max(347, max(line_widths) + 47))
     card_left = int(round((720 - card_width) / 2))
     text_left = card_left + 23
     gap = 10

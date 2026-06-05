@@ -123,15 +123,16 @@ def compare(reference: Dict[str, Any], production: Dict[str, Any]) -> Dict[str, 
 
     add("card_center_x", production["card_center_x"], reference["card_center_x"], 16)
     add("card_top", production["card_bbox"][1], reference["card_bbox"][1], 8)
-    add("card_width", production["card_width"], reference["card_width"], 42)
+    add("card_width", production["card_width"], reference["card_width"], 16)
     add("card_height", production["card_height"], reference["card_height"], 18)
-    add("text_left", production["text_bbox"][0], reference["text_bbox"][0], 24)
+    add("text_left", production["text_bbox"][0], reference["text_bbox"][0], 12)
     add("text_top", production["text_bbox"][1], reference["text_bbox"][1], 8)
-    add("text_width", production["text_width"], reference["text_width"], 72)
-    add("text_height", production["text_height"], reference["text_height"], 16)
+    add("text_width", production["text_width"], reference["text_width"], 24)
+    add("text_height", production["text_height"], reference["text_height"], 8)
     add("top_pad", production["top_pad"], reference["top_pad"], 10)
-    add("bottom_pad", production["bottom_pad"], reference["bottom_pad"], 8)
-    add("text_density", production["text_density"], reference["text_density"], 0.055)
+    add("bottom_pad", production["bottom_pad"], reference["bottom_pad"], 5)
+    add("right_pad", production["right_pad"], reference["right_pad"], 14)
+    add("text_density", production["text_density"], reference["text_density"], 0.04)
     return {"ok": all(check["ok"] for check in checks), "checks": checks}
 
 
@@ -179,7 +180,8 @@ def main() -> int:
         "ok": comparison["ok"],
         "reference_phrase": REFERENCE_PHRASE,
         "rendered_hook": rendered_hook,
-        "font": list(top_hook_card_font(38).getname()),
+        "font": list(top_hook_card_font(35).getname()),
+        "source_space_font_size": 35,
         "reference": reference_metrics,
         "production": production_metrics,
         "comparison": comparison,

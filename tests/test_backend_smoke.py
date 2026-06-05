@@ -193,8 +193,20 @@ class BackendSmokeTests(unittest.TestCase):
         sys.modules["build_evidence_review_kit_for_top_hook_test"] = module
         spec.loader.exec_module(module)
 
-        font_name = module.top_hook_card_font(38).getname()
-        if Path("/System/Library/Fonts/SFNS.ttf").exists():
+        font_name = module.top_hook_card_font(35).getname()
+        tiktok_semibold = (
+            Path(__file__).resolve().parents[1]
+            / "backend"
+            / "clipping_ops_backend"
+            / "assets"
+            / "fonts"
+            / "TikTokSans36pt-SemiBold.ttf"
+        )
+        if tiktok_semibold.exists():
+            self.assertEqual(font_name, ("TikTok Sans", "SemiBold"))
+        elif Path("/System/Library/Fonts/Avenir Next.ttc").exists():
+            self.assertEqual(font_name, ("Avenir Next", "Demi Bold"))
+        elif Path("/System/Library/Fonts/SFNS.ttf").exists():
             self.assertEqual(font_name, ("System Font", "Semibold"))
         else:
             self.assertEqual(font_name, ("TikTok Sans", "SemiBold"))
