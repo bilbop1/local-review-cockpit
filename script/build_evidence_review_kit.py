@@ -1056,7 +1056,7 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     else:
         card_width = min(max_card_width, max(347, max(line_widths) + 47))
     card_left = int(round((720 - card_width) / 2))
-    text_left = card_left + 23
+    text_left = card_left + 22
     gap = 10
     text_block_height = sum(line_heights) + max(0, len(line_heights) - 1) * gap
     card_height = max(64, min(105, text_block_height + 16))

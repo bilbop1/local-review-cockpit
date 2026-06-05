@@ -238,6 +238,9 @@ class BackendSmokeTests(unittest.TestCase):
             self.assertLessEqual(metrics["card_height"], 158)
             self.assertGreaterEqual(metrics["text_height"], 116)
             self.assertLessEqual(metrics["text_height"], 122)
+            self.assertGreaterEqual(metrics["left_pad"], 34)
+            self.assertLessEqual(metrics["left_pad"], 38)
+            self.assertGreaterEqual(metrics["right_pad"], 33)
             self.assertLess(abs(metrics["card_center_x"] - 540), 4)
 
     def test_top_hook_does_not_append_fake_stream_suffix(self):

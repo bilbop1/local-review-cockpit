@@ -267,7 +267,7 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
     top_pad = text_top - top
     bottom_pad = bottom - text_bottom
     content_height = text_bottom - text_top
-    if left_pad < 30 or left_pad > 46 or right_pad < 18:
+    if left_pad < 32 or left_pad > 40 or right_pad < 30:
         return {
             "required": True,
             "ok": False,
