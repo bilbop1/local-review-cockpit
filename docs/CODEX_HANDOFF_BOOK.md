@@ -262,14 +262,14 @@ Current renderer rules:
 - The top hook should create context and tension without spoiling the payoff, matching the TikTok reference direction from `https://www.tiktok.com/t/ZTBDvvEfD/`.
 - The top hook card should visually match the reference: white rounded rectangle at x=84, y=336, width=896, height=157 on a 1080x1920 render, with a tiny shadow ending around x=984, y=498; text starts at x=134 and visual y=356; use Arial Bold 52px with 64px emoji and a 12px two-line gap. Do not regress to the old small pill-style TikTok ExtraBold overlay.
 - The campaign final canvas should match the reference stack: blurred full-screen source background, sharp 16:9 source foreground at x=0, y=513, width=1080, height=607. Do not use the old vertically centered foreground layout for campaign finals.
-- Campaign final renders include a public-facing creator watermark in the lower blurred section. It should identify the source handle, not internal review or proof state.
+- Campaign final renders include exactly one public-facing identity watermark in the lower blurred section. If a campaign supplies a required watermark asset, use that asset in the lower reference-style slot; otherwise use the generated `@handle` lower watermark. Do not add a second top-left/top-edge logo in the campaign-short lane.
 - No internal labels in frames.
 - No “selected feeder,” “proof,” “review kit,” “demo,” or “review-safe” text in rendered video.
 - Maximum 2 words on screen per caption beat.
 - Maximum 1 subtitle line visible at a time.
 - Target maximum 12 characters for normal two-word beats.
 - Use 1 word only for long words, emphasis, or timing.
-- Captions should sit in the platform-safe lower-third band, currently y=1210-1400 on a 1080x1920 render, not dead center and not buried under TikTok/IG/Shorts UI.
+- Captions should sit in the reference-style gap below the foreground frame and above the lower identity watermark, currently y=1128-1235 with visual center near y=1184 on a 1080x1920 render. They should not overlap the creator watermark, sit dead center, or get buried under TikTok/IG/Shorts UI.
 - Use platform overlay previews in the GUI to verify subtitles are not covered.
 - Timing should follow word-level transcript timing with the renderer's late-pop display windows. Do not solve early captions by shifting everything earlier or later blindly.
 - Ensemble-consensus captions must still receive the render-time visual/audio delay. Do not bypass `apply_caption_audio_sync_delay()` just because multiple transcription models agree.

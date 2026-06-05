@@ -297,25 +297,56 @@ def reference_watermark_check(kit_dir: Path) -> Dict[str, Any]:
     required = profile == db.CAMPAIGN_SHORT_PROFILE or layout == "summary_hook_caption"
     if not required:
         return {"required": False, "ok": True}
-    watermark = rendered.get("reference_watermark", {}) if isinstance(rendered, dict) else {}
-    overlay = kit_dir / "reference_handle_watermark.png"
-    if not isinstance(watermark, dict) or not watermark.get("visible") or not str(watermark.get("text", "")).strip():
-        return {"required": True, "ok": False, "reason": "reference handle watermark is missing from manifest"}
-    if not overlay.exists():
-        return {"required": True, "ok": False, "reason": "reference_handle_watermark.png missing"}
-    alpha = Image.open(overlay).convert("RGBA").getchannel("A")
-    bbox = alpha.getbbox()
-    if not bbox:
-        return {"required": True, "ok": False, "reason": "reference_handle_watermark.png has no visible pixels"}
-    left, top, right, bottom = bbox
-    if top < 1230 or top > 1325 or bottom < 1320 or bottom > 1415:
+    visible_candidates = []
+    reference_watermark = rendered.get("reference_watermark", {}) if isinstance(rendered, dict) else {}
+    if isinstance(reference_watermark, dict) and reference_watermark.get("visible"):
+        visible_candidates.append(("reference", reference_watermark, kit_dir / "reference_handle_watermark.png"))
+    campaign_watermark = rendered.get("campaign_watermark", {}) if isinstance(rendered, dict) else {}
+    if isinstance(campaign_watermark, dict) and rendered.get("watermark_visible") is True:
+        visible_candidates.append(("campaign", campaign_watermark, Path(str(campaign_watermark.get("overlay_path", ""))) if campaign_watermark.get("overlay_path") else kit_dir / "campaign_watermark.png"))
+    if not visible_candidates:
+        return {"required": True, "ok": False, "reason": "lower reference-style identity watermark is missing from manifest"}
+    if len(visible_candidates) > 1:
         return {
             "required": True,
             "ok": False,
-            "reason": f"reference watermark bbox {left},{top},{right},{bottom} is outside lower blur band",
+            "reason": "campaign render has duplicate identity watermarks; reference requires one lower blurred-section handle",
+            "watermarks": [name for name, _, _ in visible_candidates],
+        }
+    kind, watermark, overlay = visible_candidates[0]
+    if str(watermark.get("position", "")) not in {"bottom_blur_center", ""}:
+        return {
+            "required": True,
+            "ok": False,
+            "reason": f"identity watermark position {watermark.get('position', '')!r} is not the lower reference band",
+            "watermark": watermark,
+        }
+    if kind == "reference" and not str(watermark.get("text", "")).strip():
+        return {"required": True, "ok": False, "reason": "reference handle watermark text is missing"}
+    if kind == "campaign" and not str(watermark.get("asset_path", "")).strip():
+        return {"required": True, "ok": False, "reason": "required campaign watermark asset path is missing"}
+    if not overlay.exists():
+        return {"required": True, "ok": False, "reason": f"{overlay.name} missing"}
+    alpha = Image.open(overlay).convert("RGBA").getchannel("A")
+    bbox = alpha.getbbox()
+    if not bbox:
+        return {"required": True, "ok": False, "reason": f"{overlay.name} has no visible pixels"}
+    left, top, right, bottom = bbox
+    if top < 1230 or top > 1325 or bottom < 1280 or bottom > 1415:
+        return {
+            "required": True,
+            "ok": False,
+            "reason": f"identity watermark bbox {left},{top},{right},{bottom} is outside lower blur band",
             "bbox": [left, top, right, bottom],
         }
-    return {"required": True, "ok": True, "text": watermark.get("text", ""), "bbox": [left, top, right, bottom]}
+    return {
+        "required": True,
+        "ok": True,
+        "kind": kind,
+        "text": watermark.get("text", ""),
+        "asset_path": watermark.get("asset_path", ""),
+        "bbox": [left, top, right, bottom],
+    }
 
 
 def verify_kit(row: Dict[str, Any]) -> Dict[str, Any]:

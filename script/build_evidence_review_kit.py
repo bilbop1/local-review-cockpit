@@ -1068,22 +1068,22 @@ def reference_handle_watermark(path: Path, platform: str, handle: str, *, show: 
         return {}
     draw = ImageDraw.Draw(image, "RGBA")
     text = f"@{clean_handle.lower()}"
-    style_font = top_hook_font(53)
-    text_width, text_height = text_size(draw, text, style_font, stroke_width=4)
-    icon_size = 42
-    gap = 8
+    style_font = top_hook_font(40)
+    text_width, text_height = text_size(draw, text, style_font, stroke_width=3)
+    icon_size = 32
+    gap = 7
     total_width = icon_size + gap + text_width
     left = (1080 - total_width) // 2
-    top = 1270
+    top = 1276
     color = (145, 70, 255, 255) if str(platform).lower() == "twitch" else (55, 220, 62, 255)
-    draw.rounded_rectangle((left + 2, top + 2, left + icon_size + 2, top + icon_size + 2), radius=9, fill=(0, 0, 0, 120))
-    draw.rounded_rectangle((left, top, left + icon_size, top + icon_size), radius=8, fill=color)
-    bubble = (left + 10, top + 10, left + 32, top + 27)
-    draw.rounded_rectangle(bubble, radius=3, outline=(255, 255, 255, 255), width=4)
-    draw.polygon([(left + 18, top + 27), (left + 18, top + 34), (left + 26, top + 27)], fill=(255, 255, 255, 255))
+    draw.rounded_rectangle((left + 2, top + 2, left + icon_size + 2, top + icon_size + 2), radius=7, fill=(0, 0, 0, 120))
+    draw.rounded_rectangle((left, top, left + icon_size, top + icon_size), radius=7, fill=color)
+    bubble = (left + 8, top + 8, left + 25, top + 21)
+    draw.rounded_rectangle(bubble, radius=2, outline=(255, 255, 255, 255), width=3)
+    draw.polygon([(left + 14, top + 21), (left + 14, top + 27), (left + 21, top + 21)], fill=(255, 255, 255, 255))
     text_left = left + icon_size + gap
-    text_top = top - 7
-    draw_text_visual_top(draw, text, text_left, text_top, style_font, (255, 255, 255, 255), (0, 0, 0, 245), 4)
+    text_top = top - 6
+    draw_text_visual_top(draw, text, text_left, text_top, style_font, (255, 255, 255, 255), (0, 0, 0, 245), 3)
     image.save(path)
     return {
         "visible": True,
@@ -1169,8 +1169,8 @@ def campaign_watermark_overlay(path: Path, watermark_path: Path) -> Dict[str, An
     scale = min(max_width / max(1, watermark.width), max_height / max(1, watermark.height), 1.0)
     target_size = (max(1, int(watermark.width * scale)), max(1, int(watermark.height * scale)))
     watermark = watermark.resize(target_size, Image.Resampling.LANCZOS)
-    left = 34
-    top = 44
+    left = (1080 - watermark.width) // 2
+    top = 1270
     shadow = Image.new("RGBA", watermark.size, (0, 0, 0, 0))
     shadow_alpha = watermark.getchannel("A").point(lambda value: min(130, int(value * 0.55)))
     shadow.putalpha(shadow_alpha)
@@ -1180,7 +1180,7 @@ def campaign_watermark_overlay(path: Path, watermark_path: Path) -> Dict[str, An
     return {
         "asset_path": str(watermark_path),
         "overlay_path": str(path),
-        "position": "top_left_safe",
+        "position": "bottom_blur_center",
         "x": left,
         "y": top,
         "width": watermark.width,
@@ -1622,7 +1622,7 @@ def render_review_video(
         reference_watermark_path,
         platform,
         handle,
-        show=caption_only_profile,
+        show=caption_only_profile and not watermark_asset,
     )
 
     source_width, source_height = source_dimensions(media_path)
