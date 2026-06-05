@@ -1048,11 +1048,10 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         return ""
     line_heights = [mixed_text_size(draw, line, title_font, emoji_font)[1] for line in lines]
     line_widths = [mixed_text_size(draw, line, title_font, emoji_font)[0] for line in lines]
-    # The TikTok white text-card reference uses one stable, wide card for
-    # normal two-line hooks. Letting each title shrink to its own text width
-    # made the top card read like a custom overlay instead of the native card.
+    # Long hooks should reach the reference card width, but shorter hooks
+    # need to fit their longest line so the white card does not look empty.
     if len(lines) == 2:
-        card_width = max_card_width
+        card_width = min(max_card_width, max(460, max(line_widths) + 44))
     else:
         card_width = min(max_card_width, max(347, max(line_widths) + 47))
     card_left = int(round((720 - card_width) / 2))

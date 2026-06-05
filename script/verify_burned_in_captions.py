@@ -228,13 +228,13 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
     width = right - left
     height = bottom - top
     center_x = (left + right) / 2
-    if abs(center_x - 541.5) > 8 or top < 330 or top > 342 or height < 138 or height > 166 or width < 875 or width > 895:
+    if abs(center_x - 541.5) > 8 or top < 330 or top > 342 or height < 138 or height > 166 or width < 685 or width > 895:
         return {
             "required": True,
             "ok": False,
             "reason": (
                 f"top hook bbox {left},{top},{right},{bottom} does not match reference band "
-                "centered at x 540, y=336, reference-width 875-895, height 138-166 with shadow"
+                "centered at x 540, y=336, adaptive width 685-895, height 138-166 with shadow"
             ),
             "bbox": [left, top, right, bottom],
             "width": width,

@@ -243,6 +243,29 @@ class BackendSmokeTests(unittest.TestCase):
             self.assertGreaterEqual(metrics["right_pad"], 33)
             self.assertLess(abs(metrics["card_center_x"] - 540), 4)
 
+    def test_short_two_line_top_hook_uses_fit_width_card(self):
+        from PIL import Image
+        from script.audit_top_card_reference import measure_overlay
+
+        module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"
+        spec = importlib.util.spec_from_file_location("build_evidence_review_kit_for_top_card_fit_test", module_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["build_evidence_review_kit_for_top_card_fit_test"] = module
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "title_card.png"
+            hook = module.headline_card(path, "Jason got tired of fake rumor math", "jasontheween")
+            self.assertIn("fake rumor math", hook)
+            metrics = measure_overlay(Image.open(path).convert("RGBA"))
+            self.assertGreaterEqual(metrics["card_width"], 685)
+            self.assertLessEqual(metrics["card_width"], 760)
+            self.assertGreaterEqual(metrics["left_pad"], 34)
+            self.assertLessEqual(metrics["left_pad"], 38)
+            self.assertLess(abs(metrics["card_center_x"] - 540), 4)
+
     def test_top_hook_does_not_append_fake_stream_suffix(self):
         module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"
         spec = importlib.util.spec_from_file_location("build_evidence_review_kit_for_suffix_test", module_path)
