@@ -998,15 +998,14 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     # hook is long.
     max_card_width = 881
     card_top = 336
-    card_height = 157
     text_top = 356
-    text_max_width = 811
-    title_font = top_hook_card_font(48)
+    text_max_width = 820
+    title_font = top_hook_card_font(52)
     emoji_font = top_hook_emoji_font(64)
     lines: List[str] = []
-    for font_size in (48, 46, 44, 42, 40):
+    for font_size in (52, 50, 48, 46, 44, 42, 40):
         candidate_font = top_hook_card_font(font_size)
-        candidate_emoji_font = top_hook_emoji_font(64 if font_size >= 48 else 52)
+        candidate_emoji_font = top_hook_emoji_font(64 if font_size >= 50 else 52)
         candidate_lines = _reference_top_hook_lines(draw, hook, candidate_font, candidate_emoji_font, text_max_width)
         widths = [mixed_text_size(draw, line, candidate_font, candidate_emoji_font)[0] for line in candidate_lines]
         same_text = " ".join(candidate_lines).strip() == hook
@@ -1027,7 +1026,9 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     card_width = min(max_card_width, max(520, max(line_widths) + 70))
     card_left = int(round((1080 - card_width) / 2))
     text_left = card_left + 35
-    gap = 8
+    gap = 10
+    text_block_height = sum(line_heights) + max(0, len(line_heights) - 1) * gap
+    card_height = max(96, min(157, text_block_height + 35))
     draw.rounded_rectangle(
         (card_left + 3, card_top + 4, card_left + card_width + 3, card_top + card_height + 4),
         radius=13,

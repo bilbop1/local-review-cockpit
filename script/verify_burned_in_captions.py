@@ -217,13 +217,13 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
     width = right - left
     height = bottom - top
     center_x = (left + right) / 2
-    if abs(center_x - 541.5) > 8 or top < 330 or top > 342 or bottom < 492 or bottom > 502 or width < 520 or width > 890:
+    if abs(center_x - 541.5) > 8 or top < 330 or top > 342 or height < 138 or height > 166 or width < 520 or width > 890:
         return {
             "required": True,
             "ok": False,
             "reason": (
                 f"top hook bbox {left},{top},{right},{bottom} does not match reference band "
-                "centered at x 540, y 336/498, content-hugging width 520-890 with shadow"
+                "centered at x 540, y=336, content-hugging width 520-890, height 138-166 with shadow"
             ),
             "bbox": [left, top, right, bottom],
             "width": width,
@@ -245,8 +245,13 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
         return {"required": True, "ok": False, "reason": "top hook card has no measurable text pixels", "bbox": [left, top, right, bottom]}
     text_left = min(text_xs)
     text_right = max(text_xs) + 1
+    text_top = min(text_ys)
+    text_bottom = max(text_ys) + 1
     left_pad = text_left - left
     right_pad = right - text_right
+    top_pad = text_top - top
+    bottom_pad = bottom - text_bottom
+    content_height = text_bottom - text_top
     if left_pad < 24 or left_pad > 58 or right_pad < 18 or right_pad > 70:
         return {
             "required": True,
@@ -258,6 +263,20 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
             "text_bbox": [text_left, min(text_ys), text_right, max(text_ys) + 1],
             "left_pad": left_pad,
             "right_pad": right_pad,
+        }
+    if top_pad < 16 or top_pad > 24 or bottom_pad < 12 or bottom_pad > 30 or content_height < 96:
+        return {
+            "required": True,
+            "ok": False,
+            "reason": (
+                f"top hook card vertical balance top={top_pad}, bottom={bottom_pad}, content_height={content_height} "
+                "does not match the reference-style filled card"
+            ),
+            "bbox": [left, top, right, bottom],
+            "text_bbox": [text_left, text_top, text_right, text_bottom],
+            "top_pad": top_pad,
+            "bottom_pad": bottom_pad,
+            "content_height": content_height,
         }
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     frame = OUT_DIR / f"{kit_dir.name}-top-hook.jpg"
@@ -284,9 +303,12 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
         "hook": hook,
         "overlay_pixel_match_ratio": round(ratio, 3),
         "bbox": [left, top, right, bottom],
-        "text_bbox": [text_left, min(text_ys), text_right, max(text_ys) + 1],
+        "text_bbox": [text_left, text_top, text_right, text_bottom],
         "left_pad": left_pad,
         "right_pad": right_pad,
+        "top_pad": top_pad,
+        "bottom_pad": bottom_pad,
+        "content_height": content_height,
         "frame": str(frame),
         "overlay": str(title_card),
     }
