@@ -27,7 +27,7 @@ from clipping_ops_backend.caption_style import (
     caption_display_window_seconds,
     caption_text_quality_violations,
 )
-from script.audit_top_card_reference import measure_overlay
+from script.audit_top_card_reference import measure_overlay, measure_text_color_split
 
 OUT_DIR = ROOT / "artifacts" / "review-kit-audit" / "burned-caption-frames"
 SUMMARY_PATH = ROOT / "artifacts" / "review-kit-audit" / "burned-caption-verification.json"
@@ -251,7 +251,7 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
             "left_pad": left_pad,
             "right_pad": right_pad,
         }
-    if top_pad < 20 or top_pad > 23 or bottom_pad < 13 or bottom_pad > 16 or content_height < 120 or content_height > 123:
+    if top_pad < 20 or top_pad > 23 or bottom_pad < 13 or bottom_pad > 17 or content_height < 119 or content_height > 123:
         return {
             "required": True,
             "ok": False,
@@ -265,6 +265,27 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
             "bottom_pad": bottom_pad,
             "content_height": content_height,
         }
+    color_split = measure_text_color_split(title_image, metrics["card_bbox"])
+    emoji_box = color_split.get("emoji_color_bbox")
+    if content_height >= 110 and emoji_box:
+        emoji_top_pad = emoji_box[1] - top
+        emoji_bottom_pad = bottom - emoji_box[3]
+        emoji_height = emoji_box[3] - emoji_box[1]
+        if emoji_top_pad < 79 or emoji_top_pad > 84 or emoji_bottom_pad < 15 or emoji_bottom_pad > 21 or emoji_height < 54 or emoji_height > 61:
+            return {
+                "required": True,
+                "ok": False,
+                "reason": (
+                    f"top hook emoji baseline top_pad={emoji_top_pad}, bottom_pad={emoji_bottom_pad}, "
+                    f"height={emoji_height} does not match the TikTok reference card"
+                ),
+                "bbox": [left, top, right, bottom],
+                "text_bbox": [text_left, text_top, text_right, text_bottom],
+                "emoji_color_bbox": emoji_box,
+                "emoji_top_pad": emoji_top_pad,
+                "emoji_bottom_pad": emoji_bottom_pad,
+                "emoji_height": emoji_height,
+            }
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     frame = OUT_DIR / f"{kit_dir.name}-top-hook.jpg"
     result = run([
@@ -296,6 +317,7 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
         "top_pad": top_pad,
         "bottom_pad": bottom_pad,
         "content_height": content_height,
+        "color_split": color_split,
         "frame": str(frame),
         "overlay": str(title_card),
     }

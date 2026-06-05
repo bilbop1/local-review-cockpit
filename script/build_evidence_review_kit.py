@@ -267,16 +267,19 @@ def draw_mixed_text_visual_top(
     fill: tuple[int, int, int, int],
 ) -> None:
     x = left
-    emoji_y_offset = -5
+    # TikTok's native card places Apple-style emoji slightly higher and more
+    # centered than Pillow's default mixed-text baseline.
+    emoji_x_offset = -2
+    emoji_y_offset = -7
     for is_emoji, run_text in mixed_text_runs(text):
         run_font = emoji_font if is_emoji and emoji_font is not None else style_font
         bbox = draw.textbbox((0, 0), run_text, font=run_font)
         if is_emoji and emoji_font is not None:
             emoji_top = top + emoji_y_offset
             try:
-                draw.text((x - bbox[0], emoji_top - bbox[1]), run_text, font=run_font, embedded_color=True)
+                draw.text((x - bbox[0] + emoji_x_offset, emoji_top - bbox[1]), run_text, font=run_font, embedded_color=True)
             except TypeError:
-                draw.text((x - bbox[0], emoji_top - bbox[1]), run_text, font=run_font, fill=fill)
+                draw.text((x - bbox[0] + emoji_x_offset, emoji_top - bbox[1]), run_text, font=run_font, fill=fill)
         else:
             draw.text((x - bbox[0], top - bbox[1]), run_text, font=run_font, fill=fill)
         x += bbox[2] - bbox[0]

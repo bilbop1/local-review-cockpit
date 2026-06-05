@@ -114,6 +114,40 @@ def measure_text_in_region(image: Image.Image, card: list[int], *, alpha_require
     }
 
 
+def measure_text_color_split(image: Image.Image, card: list[int]) -> Dict[str, Any]:
+    rgba = image.convert("RGBA")
+    pixels = rgba.load()
+    left, top, right, bottom = card
+    dark_points = []
+    color_points = []
+    for y in range(top + 4, bottom - 4):
+        for x in range(left + 4, right - 4):
+            r, g, b, a = pixels[x, y]
+            if a < 80:
+                continue
+            if r > 245 and g > 245 and b > 245:
+                continue
+            is_dark_text = r < 112 and g < 112 and b < 112 and max(r, g, b) - min(r, g, b) < 64
+            is_color_emoji = max(r, g, b) >= 120 and max(r, g, b) - min(r, g, b) >= 50
+            if is_dark_text:
+                dark_points.append((x, y))
+            if is_color_emoji:
+                color_points.append((x, y))
+    color = bbox(color_points)
+    dark = bbox(dark_points)
+    payload: Dict[str, Any] = {
+        "dark_bbox": dark,
+        "dark_area": len(dark_points),
+        "emoji_color_bbox": color,
+        "emoji_color_area": len(color_points),
+    }
+    if color:
+        payload["emoji_color_width"] = color[2] - color[0]
+        payload["emoji_color_height"] = color[3] - color[1]
+        payload["emoji_color_center_x"] = (color[0] + color[2]) / 2
+    return payload
+
+
 def compare(reference: Dict[str, Any], production: Dict[str, Any]) -> Dict[str, Any]:
     checks = []
 
@@ -142,6 +176,34 @@ def compare(reference: Dict[str, Any], production: Dict[str, Any]) -> Dict[str, 
     add("bottom_pad", production["bottom_pad"], reference["bottom_pad"], 1)
     add("right_pad", production["right_pad"], reference["right_pad"], 2)
     add("text_density", production["text_density"], reference["text_density"], 0.006)
+    return {"ok": all(check["ok"] for check in checks), "checks": checks}
+
+
+def compare_emoji(reference: Dict[str, Any], production: Dict[str, Any]) -> Dict[str, Any]:
+    checks = []
+
+    def add(name: str, actual: float, expected: float, tolerance: float) -> None:
+        delta = actual - expected
+        checks.append(
+            {
+                "name": name,
+                "actual": actual,
+                "expected": expected,
+                "delta": delta,
+                "tolerance": tolerance,
+                "ok": abs(delta) <= tolerance,
+            }
+        )
+
+    ref_box = reference.get("emoji_color_bbox")
+    prod_box = production.get("emoji_color_bbox")
+    if not ref_box or not prod_box:
+        return {"ok": False, "checks": [{"name": "emoji_color_bbox", "ok": False, "reason": "missing emoji color bbox"}]}
+    add("emoji_color_left", prod_box[0], ref_box[0], 4)
+    add("emoji_color_top", prod_box[1], ref_box[1], 2)
+    add("emoji_color_bottom", prod_box[3], ref_box[3], 3)
+    add("emoji_color_center_x", production["emoji_color_center_x"], reference["emoji_color_center_x"], 4)
+    add("emoji_color_width", production["emoji_color_width"], reference["emoji_color_width"], 8)
     return {"ok": all(check["ok"] for check in checks), "checks": checks}
 
 
@@ -185,15 +247,21 @@ def main() -> int:
     reference_metrics = measure_reference(reference)
     production_metrics = measure_overlay(overlay)
     comparison = compare(reference_metrics, production_metrics)
+    reference_color = measure_text_color_split(reference, reference_metrics["card_bbox"])
+    production_color = measure_text_color_split(production_frame, production_metrics["card_bbox"])
+    emoji_comparison = compare_emoji(reference_color, production_color)
     payload = {
-        "ok": comparison["ok"],
+        "ok": comparison["ok"] and emoji_comparison["ok"],
         "reference_phrase": REFERENCE_PHRASE,
         "rendered_hook": rendered_hook,
         "font": list(top_hook_card_font(34).getname()),
         "source_space_font_size": 34,
         "reference": reference_metrics,
         "production": production_metrics,
+        "reference_color": reference_color,
+        "production_color": production_color,
         "comparison": comparison,
+        "emoji_comparison": emoji_comparison,
         "sheet": str(args.out_dir / "reference-vs-production-top-card-3x.jpg"),
         "overlay": str(overlay_path),
     }
