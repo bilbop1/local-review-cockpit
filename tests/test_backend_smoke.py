@@ -199,6 +199,33 @@ class BackendSmokeTests(unittest.TestCase):
         else:
             self.assertEqual(font_name, ("TikTok Sans", "SemiBold"))
 
+    def test_top_hook_does_not_append_fake_stream_suffix(self):
+        module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"
+        spec = importlib.util.spec_from_file_location("build_evidence_review_kit_for_suffix_test", module_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["build_evidence_review_kit_for_suffix_test"] = module
+        spec.loader.exec_module(module)
+
+        hook = module.reference_top_hook_text("Max got Lucki talking about turning thirty")
+        self.assertEqual(hook, "Max got Lucki talking about turning thirty 🤣🤣")
+        self.assertNotIn("on stream", hook.lower())
+
+    def test_top_hook_reference_audit_passes_when_reference_exists(self):
+        root = Path(__file__).resolve().parents[1]
+        reference = root / "artifacts" / "review-kit-audit" / "top-typography-audit" / "reference-frame-1080.jpg"
+        if not reference.exists():
+            self.skipTest("local TikTok reference frame is not present")
+        result = subprocess.run(
+            [sys.executable, str(root / "script" / "audit_top_card_reference.py")],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_caption_timing_cleaner_drops_vtt_boundary_slivers(self):
         words = [
             {"word": "It's", "start": 0.0, "end": 0.02},

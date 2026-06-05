@@ -21,6 +21,7 @@ from clipping_ops_backend.caption_style import (
     CAPTION_SAFE_BAND_BOTTOM_Y,
     CAPTION_SAFE_BAND_TOP_Y,
     DEFAULT_CAMPAIGN_CAPTION_VARIANT,
+    PRODUCTION_CAPTION_VARIANTS,
     caption_display_window_seconds,
     caption_text_quality_violations,
 )
@@ -249,6 +250,10 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
                 continue
             if r > 245 and g > 245 and b > 245:
                 continue
+            is_dark_text = max(r, g, b) < 112 and max(r, g, b) - min(r, g, b) < 72
+            is_color_emoji = max(r, g, b) >= 120 and max(r, g, b) - min(r, g, b) >= 50
+            if not (is_dark_text or is_color_emoji):
+                continue
             text_xs.append(x)
             text_ys.append(y)
     if not text_xs:
@@ -431,13 +436,15 @@ def campaign_caption_variant_check(kit_dir: Path) -> Dict[str, Any]:
         return {"required": False, "ok": True}
     style = rendered.get("caption_style", {}) if isinstance(rendered, dict) else {}
     variant = str(style.get("ab_variant", "") if isinstance(style, dict) else "").strip().upper()
-    ok = variant == DEFAULT_CAMPAIGN_CAPTION_VARIANT
+    allowed_variants = [str(item).upper() for item in PRODUCTION_CAPTION_VARIANTS]
+    ok = variant in allowed_variants
     return {
         "required": True,
         "ok": ok,
         "variant": variant,
-        "expected_variant": DEFAULT_CAMPAIGN_CAPTION_VARIANT,
-        "reason": "" if ok else f"campaign final uses caption variant {variant!r}; expected unified default {DEFAULT_CAMPAIGN_CAPTION_VARIANT!r}",
+        "default_variant": DEFAULT_CAMPAIGN_CAPTION_VARIANT,
+        "allowed_variants": allowed_variants,
+        "reason": "" if ok else f"campaign final uses caption variant {variant!r}; expected one of {allowed_variants!r}",
     }
 
 

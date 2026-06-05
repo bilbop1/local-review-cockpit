@@ -982,10 +982,6 @@ def reference_top_hook_text(hook: str) -> str:
     clean = " ".join(str(hook).split()).strip(" ,.;:-")
     if not clean:
         return ""
-    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'’.-]*", clean)
-    lowered = clean.lower()
-    if len(words) < 9 and "stream" not in lowered:
-        clean = f"{clean} on stream"
     has_emoji = any(is_emoji_char(char) for char in clean)
     if not has_emoji:
         clean = f"{clean} 🤣🤣"
@@ -1035,17 +1031,17 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     card_width = min(max_card_width, max(347, max(line_widths) + 47))
     card_left = int(round((720 - card_width) / 2))
     text_left = card_left + 23
-    gap = 7
+    gap = 10
     text_block_height = sum(line_heights) + max(0, len(line_heights) - 1) * gap
     card_height = max(64, min(105, text_block_height + 23))
     draw.rounded_rectangle(
         (card_left + 2, card_top + 3, card_left + card_width + 2, card_top + card_height + 3),
-        radius=9,
+        radius=14,
         fill=(0, 0, 0, 28),
     )
     draw.rounded_rectangle(
         (card_left, card_top, card_left + card_width, card_top + card_height),
-        radius=9,
+        radius=14,
         fill=(255, 255, 255, 255),
     )
     y = text_top
