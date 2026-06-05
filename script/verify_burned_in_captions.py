@@ -274,13 +274,13 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
             "left_pad": left_pad,
             "right_pad": right_pad,
         }
-    if top_pad < 16 or top_pad > 24 or bottom_pad < 12 or bottom_pad > 30 or content_height < 96:
+    if top_pad < 16 or top_pad > 24 or bottom_pad < 12 or bottom_pad > 24 or content_height < 112 or content_height > 134:
         return {
             "required": True,
             "ok": False,
             "reason": (
                 f"top hook card vertical balance top={top_pad}, bottom={bottom_pad}, content_height={content_height} "
-                "does not match the reference-style filled card"
+                "does not match the reference-style filled card typography"
             ),
             "bbox": [left, top, right, bottom],
             "text_bbox": [text_left, text_top, text_right, text_bottom],
