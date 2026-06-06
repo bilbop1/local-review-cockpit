@@ -298,6 +298,31 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertEqual(hook, "Max got Lucki talking about turning thirty 🤣🤣")
         self.assertNotIn("on stream", hook.lower())
 
+    def test_top_hook_balances_short_two_line_cards(self):
+        from PIL import Image, ImageDraw
+
+        module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"
+        spec = importlib.util.spec_from_file_location("build_evidence_review_kit_for_line_balance_test", module_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["build_evidence_review_kit_for_line_balance_test"] = module
+        spec.loader.exec_module(module)
+
+        draw = ImageDraw.Draw(Image.new("RGBA", (720, 1280), (0, 0, 0, 0)), "RGBA")
+        style_font = module.top_hook_card_font(34)
+        emoji_font = module.top_hook_emoji_font(40)
+        lines = module._reference_top_hook_lines(
+            draw,
+            "Max got Lucki talking about turning thirty 🤣🤣",
+            style_font,
+            emoji_font,
+            548,
+        )
+        widths = [module.mixed_text_size(draw, line, style_font, emoji_font)[0] for line in lines]
+        self.assertEqual(lines, ["Max got Lucki talking", "about turning thirty 🤣🤣"])
+        self.assertGreaterEqual(min(widths) / max(widths), 0.80)
+
     def test_top_hook_reference_audit_passes_when_reference_exists(self):
         root = Path(__file__).resolve().parents[1]
         reference = root / "artifacts" / "review-kit-audit" / "top-typography-audit" / "reference-frame-1080.jpg"

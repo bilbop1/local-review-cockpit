@@ -1040,7 +1040,7 @@ def _reference_top_hook_lines(
     greedy = _top_hook_wrapped_lines(draw, text, style_font, emoji_font, max_width, max_lines=2)
     if len(greedy) == 2:
         widths = [mixed_text_size(draw, line, style_font, emoji_font)[0] for line in greedy]
-        if min(widths) / max(1, max(widths)) >= 0.55:
+        if min(widths) / max(1, max(widths)) >= 0.80:
             return greedy
     return _balanced_top_hook_lines(draw, text, style_font, emoji_font, max_width)
 
