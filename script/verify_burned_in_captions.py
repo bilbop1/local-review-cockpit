@@ -27,7 +27,7 @@ from clipping_ops_backend.caption_style import (
     caption_display_window_seconds,
     caption_text_quality_violations,
 )
-from script.audit_top_card_reference import measure_overlay, measure_text_color_split
+from script.audit_top_card_reference import compare_line_centering, measure_overlay, measure_text_color_split
 
 OUT_DIR = ROOT / "artifacts" / "review-kit-audit" / "burned-caption-frames"
 SUMMARY_PATH = ROOT / "artifacts" / "review-kit-audit" / "burned-caption-verification.json"
@@ -239,17 +239,19 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
     top_pad = metrics["top_pad"]
     bottom_pad = metrics["bottom_pad"]
     content_height = metrics["text_height"]
-    if left_pad < 32 or left_pad > 36 or right_pad < 30 or right_pad > 42:
+    line_centering = compare_line_centering(metrics)
+    if not line_centering["ok"]:
         return {
             "required": True,
             "ok": False,
             "reason": (
-                f"top hook card padding left={left_pad}, right={right_pad} does not match reference card spacing"
+                "top hook card text lines are not centered within the white card"
             ),
             "bbox": [left, top, right, bottom],
             "text_bbox": [text_left, text_top, text_right, text_bottom],
             "left_pad": left_pad,
             "right_pad": right_pad,
+            "line_centering": line_centering,
         }
     if top_pad < 20 or top_pad > 23 or bottom_pad < 13 or bottom_pad > 17 or content_height < 119 or content_height > 123:
         return {
@@ -314,6 +316,7 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
         "text_bbox": [text_left, text_top, text_right, text_bottom],
         "left_pad": left_pad,
         "right_pad": right_pad,
+        "line_centering": line_centering,
         "top_pad": top_pad,
         "bottom_pad": bottom_pad,
         "content_height": content_height,

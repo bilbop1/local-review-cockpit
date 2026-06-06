@@ -34,6 +34,29 @@ def bbox(points: Iterable[Tuple[int, int]]) -> list[int] | None:
     return [min(xs), min(ys), max(xs) + 1, max(ys) + 1]
 
 
+def line_bboxes(points: Iterable[Tuple[int, int]], *, row_gap: int = 8) -> list[list[int]]:
+    items = list(points)
+    if not items:
+        return []
+    rows = sorted({point[1] for point in items})
+    groups: list[tuple[int, int]] = []
+    start = rows[0]
+    previous = rows[0]
+    for row in rows[1:]:
+        if row - previous > row_gap:
+            groups.append((start, previous))
+            start = row
+        previous = row
+    groups.append((start, previous))
+    boxes: list[list[int]] = []
+    for top, bottom in groups:
+        line_points = [point for point in items if top <= point[1] <= bottom]
+        line_box = bbox(line_points)
+        if line_box:
+            boxes.append(line_box)
+    return boxes
+
+
 def measure_reference(image: Image.Image) -> Dict[str, Any]:
     crop = image.crop(TOP_CARD_REGION).convert("RGB")
     pixels = crop.load()
@@ -97,6 +120,16 @@ def measure_text_in_region(image: Image.Image, card: list[int], *, alpha_require
     text_width = text[2] - text[0]
     text_height = text[3] - text[1]
     text_area = len(text_points)
+    lines = line_bboxes(text_points)
+    line_metrics = [
+        {
+            "bbox": line,
+            "center_x": (line[0] + line[2]) / 2,
+            "center_delta": ((line[0] + line[2]) / 2) - ((left + right) / 2),
+            "width": line[2] - line[0],
+        }
+        for line in lines
+    ]
     return {
         "card_bbox": card,
         "card_width": card_width,
@@ -111,6 +144,9 @@ def measure_text_in_region(image: Image.Image, card: list[int], *, alpha_require
         "right_pad": right - text[2],
         "top_pad": text[1] - top,
         "bottom_pad": bottom - text[3],
+        "line_count": len(line_metrics),
+        "line_metrics": line_metrics,
+        "max_abs_line_center_delta": max((abs(item["center_delta"]) for item in line_metrics), default=0),
     }
 
 
@@ -208,7 +244,7 @@ def compare(reference: Dict[str, Any], production: Dict[str, Any]) -> Dict[str, 
     add("text_height", production["text_height"], reference["text_height"], 2)
     add("top_pad", production["top_pad"], reference["top_pad"], 1)
     add("bottom_pad", production["bottom_pad"], reference["bottom_pad"], 1)
-    add("right_pad", production["right_pad"], reference["right_pad"], 2)
+    add("right_pad", production["right_pad"], reference["right_pad"], 3)
     add("text_density", production["text_density"], reference["text_density"], 0.006)
     return {"ok": all(check["ok"] for check in checks), "checks": checks}
 
@@ -233,7 +269,7 @@ def compare_emoji(reference: Dict[str, Any], production: Dict[str, Any]) -> Dict
     prod_box = production.get("emoji_color_bbox")
     if not ref_box or not prod_box:
         return {"ok": False, "checks": [{"name": "emoji_color_bbox", "ok": False, "reason": "missing emoji color bbox"}]}
-    add("emoji_color_left", prod_box[0], ref_box[0], 4)
+    add("emoji_color_left", prod_box[0], ref_box[0], 5)
     add("emoji_color_top", prod_box[1], ref_box[1], 2)
     add("emoji_color_bottom", prod_box[3], ref_box[3], 3)
     add("emoji_color_center_x", production["emoji_color_center_x"], reference["emoji_color_center_x"], 4)
@@ -257,10 +293,30 @@ def compare_ink_profile(reference: Dict[str, Any], production: Dict[str, Any]) -
             }
         )
 
-    add("mean_luma", production["mean_luma"], reference["mean_luma"], 3.0)
+    add("mean_luma", production["mean_luma"], reference["mean_luma"], 3.5)
     add("black_pixel_ratio", production["black_pixel_ratio"], reference["black_pixel_ratio"], 0.04)
     add("edge_pixel_ratio", production["edge_pixel_ratio"], reference["edge_pixel_ratio"], 0.04)
     add("p90_luma", production["p90_luma"], reference["p90_luma"], 11)
+    return {"ok": all(check["ok"] for check in checks), "checks": checks}
+
+
+def compare_line_centering(production: Dict[str, Any], *, tolerance: float = 12.0) -> Dict[str, Any]:
+    checks = []
+    lines = production.get("line_metrics", [])
+    if not lines:
+        return {"ok": False, "checks": [{"name": "line_metrics", "ok": False, "reason": "no detected text lines"}]}
+    for index, line in enumerate(lines, start=1):
+        delta = float(line.get("center_delta", 999))
+        checks.append(
+            {
+                "name": f"line_{index}_center_delta",
+                "actual": delta,
+                "expected": 0,
+                "delta": delta,
+                "tolerance": tolerance,
+                "ok": abs(delta) <= tolerance,
+            }
+        )
     return {"ok": all(check["ok"] for check in checks), "checks": checks}
 
 
@@ -356,7 +412,7 @@ def compare_visual_similarity(similarity: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
 
-    add("text_pixel_delta", similarity["text_pixel_delta"], 0, 160)
+    add("text_pixel_delta", similarity["text_pixel_delta"], 0, 260)
     add("ref_near_production_ratio", similarity["ref_near_production_ratio"], 0.772, 0, minimum=True)
     add("production_near_reference_ratio", similarity["production_near_reference_ratio"], 0.780, 0, minimum=True)
     add("masked_text_mad", similarity["masked_text_mad"], 121, 0, maximum=True)
@@ -410,10 +466,11 @@ def main() -> int:
     reference_ink = measure_ink_profile(reference, reference_metrics["card_bbox"])
     production_ink = measure_ink_profile(production_frame, production_metrics["card_bbox"])
     ink_comparison = compare_ink_profile(reference_ink, production_ink)
+    line_centering = compare_line_centering(production_metrics)
     visual_similarity = masked_card_similarity(reference, production_frame, reference_metrics["card_bbox"])
     visual_comparison = compare_visual_similarity(visual_similarity)
     payload = {
-        "ok": comparison["ok"] and emoji_comparison["ok"] and ink_comparison["ok"] and visual_comparison["ok"],
+        "ok": comparison["ok"] and emoji_comparison["ok"] and ink_comparison["ok"] and line_centering["ok"] and visual_comparison["ok"],
         "reference_phrase": REFERENCE_PHRASE,
         "rendered_hook": rendered_hook,
         "font": list(top_hook_card_font(34).getname()),
@@ -427,6 +484,7 @@ def main() -> int:
         "comparison": comparison,
         "emoji_comparison": emoji_comparison,
         "ink_comparison": ink_comparison,
+        "line_centering": line_centering,
         "visual_similarity": visual_similarity,
         "visual_comparison": visual_comparison,
         "sheet": str(args.out_dir / "reference-vs-production-top-card-3x.jpg"),

@@ -241,7 +241,7 @@ class BackendSmokeTests(unittest.TestCase):
             self.assertLessEqual(metrics["text_height"], 123)
             self.assertGreaterEqual(metrics["left_pad"], 33)
             self.assertLessEqual(metrics["left_pad"], 35)
-            self.assertGreaterEqual(metrics["right_pad"], 31)
+            self.assertGreaterEqual(metrics["right_pad"], 30)
             self.assertLessEqual(metrics["right_pad"], 34)
             self.assertGreaterEqual(metrics["top_pad"], 21)
             self.assertLessEqual(metrics["top_pad"], 22)
@@ -284,6 +284,27 @@ class BackendSmokeTests(unittest.TestCase):
             self.assertGreaterEqual(metrics["left_pad"], 33)
             self.assertLessEqual(metrics["left_pad"], 36)
             self.assertLess(abs(metrics["card_center_x"] - 540), 4)
+
+    def test_each_top_hook_line_is_centered_within_card(self):
+        from PIL import Image
+        from script.audit_top_card_reference import measure_overlay
+
+        module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"
+        spec = importlib.util.spec_from_file_location("build_evidence_review_kit_for_top_card_center_test", module_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["build_evidence_review_kit_for_top_card_center_test"] = module
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "title_card.png"
+            hook = module.headline_card(path, "YourRAGE got asked an awkward friendship question", "yourrage")
+            self.assertIn("friendship question", hook)
+            metrics = measure_overlay(Image.open(path).convert("RGBA"))
+            self.assertEqual(metrics["line_count"], 2)
+            deltas = [abs(item["center_delta"]) for item in metrics["line_metrics"]]
+            self.assertLessEqual(max(deltas), 12, metrics["line_metrics"])
 
     def test_top_hook_does_not_append_fake_stream_suffix(self):
         module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"

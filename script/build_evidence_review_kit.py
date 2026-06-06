@@ -1126,9 +1126,11 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     )
     text_layer = Image.new("RGBA", logical.size, (0, 0, 0, 0))
     text_draw = ImageDraw.Draw(text_layer, "RGBA")
+    card_center_x = card_left + card_width / 2
     y = text_top
-    for line, line_height in zip(lines, line_heights):
-        draw_mixed_text_visual_top(text_draw, line, text_left, y, title_font, emoji_font, text_fill)
+    for line, line_height, line_width in zip(lines, line_heights, visual_line_widths):
+        line_left = int(round(card_center_x - line_width / 2))
+        draw_mixed_text_visual_top(text_draw, line, line_left, y, title_font, emoji_font, text_fill)
         y += line_height + gap
     text_layer = text_layer.filter(ImageFilter.GaussianBlur(0.22))
     logical = Image.alpha_composite(logical, text_layer)
