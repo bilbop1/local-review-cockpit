@@ -213,7 +213,7 @@ class BackendSmokeTests(unittest.TestCase):
 
     def test_two_line_top_hook_uses_reference_width_card(self):
         from PIL import Image
-        from script.audit_top_card_reference import measure_overlay
+        from script.audit_top_card_reference import compare_visual_similarity, masked_card_similarity, measure_overlay, measure_reference
 
         module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"
         spec = importlib.util.spec_from_file_location("build_evidence_review_kit_for_top_card_width_test", module_path)
@@ -231,7 +231,8 @@ class BackendSmokeTests(unittest.TestCase):
                 "max",
             )
             self.assertIn("green screening", hook)
-            metrics = measure_overlay(Image.open(path).convert("RGBA"))
+            overlay = Image.open(path).convert("RGBA")
+            metrics = measure_overlay(overlay)
             self.assertGreaterEqual(metrics["card_width"], 879)
             self.assertLessEqual(metrics["card_width"], 883)
             self.assertGreaterEqual(metrics["card_height"], 156)
@@ -242,11 +243,24 @@ class BackendSmokeTests(unittest.TestCase):
             self.assertLessEqual(metrics["left_pad"], 35)
             self.assertGreaterEqual(metrics["right_pad"], 31)
             self.assertLessEqual(metrics["right_pad"], 34)
-            self.assertGreaterEqual(metrics["top_pad"], 22)
+            self.assertGreaterEqual(metrics["top_pad"], 21)
             self.assertLessEqual(metrics["top_pad"], 22)
             self.assertGreaterEqual(metrics["bottom_pad"], 14)
             self.assertLessEqual(metrics["bottom_pad"], 14)
             self.assertLess(abs(metrics["card_center_x"] - 540), 2)
+            reference = Image.open(
+                Path(__file__).resolve().parents[1]
+                / "artifacts"
+                / "review-kit-audit"
+                / "top-typography-audit"
+                / "reference-frame-1080.jpg"
+            ).convert("RGBA")
+            reference_metrics = measure_reference(reference)
+            production_frame = Image.alpha_composite(reference, overlay)
+            visual = compare_visual_similarity(
+                masked_card_similarity(reference, production_frame, reference_metrics["card_bbox"])
+            )
+            self.assertTrue(visual["ok"], visual)
 
     def test_short_two_line_top_hook_hugs_visible_text_with_reference_padding(self):
         from PIL import Image

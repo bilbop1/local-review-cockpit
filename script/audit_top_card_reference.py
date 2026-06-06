@@ -207,6 +207,106 @@ def compare_emoji(reference: Dict[str, Any], production: Dict[str, Any]) -> Dict
     return {"ok": all(check["ok"] for check in checks), "checks": checks}
 
 
+def _textish_pixel(r: int, g: int, b: int, a: int = 255) -> bool:
+    if a < 80:
+        return False
+    if r > 245 and g > 245 and b > 245:
+        return False
+    is_dark_text = r < 112 and g < 112 and b < 112 and max(r, g, b) - min(r, g, b) < 64
+    is_color_emoji = max(r, g, b) >= 120 and max(r, g, b) - min(r, g, b) >= 50
+    return is_dark_text or is_color_emoji
+
+
+def _dilated(points: set[tuple[int, int]], radius: int = 1) -> set[tuple[int, int]]:
+    output: set[tuple[int, int]] = set()
+    for x, y in points:
+        for dy in range(-radius, radius + 1):
+            for dx in range(-radius, radius + 1):
+                output.add((x + dx, y + dy))
+    return output
+
+
+def masked_card_similarity(reference: Image.Image, production: Image.Image, card: list[int]) -> Dict[str, Any]:
+    ref = reference.convert("RGBA")
+    prod = production.convert("RGBA")
+    ref_pixels = ref.load()
+    prod_pixels = prod.load()
+    left, top, right, bottom = card
+    ref_text: set[tuple[int, int]] = set()
+    prod_text: set[tuple[int, int]] = set()
+    text_union: set[tuple[int, int]] = set()
+    background_diff = 0.0
+    background_count = 0
+    for y in range(top + 4, bottom - 4):
+        for x in range(left + 4, right - 4):
+            rr, rg, rb, ra = ref_pixels[x, y]
+            pr, pg, pb, pa = prod_pixels[x, y]
+            ref_is_text = _textish_pixel(rr, rg, rb, ra)
+            prod_is_text = _textish_pixel(pr, pg, pb, pa)
+            if ref_is_text:
+                ref_text.add((x, y))
+            if prod_is_text:
+                prod_text.add((x, y))
+            if ref_is_text or prod_is_text:
+                text_union.add((x, y))
+            else:
+                background_diff += (abs(rr - pr) + abs(rg - pg) + abs(rb - pb)) / 3
+                background_count += 1
+    text_diff = 0.0
+    for x, y in text_union:
+        rr, rg, rb, _ = ref_pixels[x, y]
+        pr, pg, pb, _ = prod_pixels[x, y]
+        text_diff += (abs(rr - pr) + abs(rg - pg) + abs(rb - pb)) / 3
+    exact_overlap = len(ref_text & prod_text)
+    prod_dilated = _dilated(prod_text, radius=1)
+    ref_dilated = _dilated(ref_text, radius=1)
+    ref_near_prod = sum(1 for point in ref_text if point in prod_dilated)
+    prod_near_ref = sum(1 for point in prod_text if point in ref_dilated)
+    return {
+        "ref_text_pixels": len(ref_text),
+        "production_text_pixels": len(prod_text),
+        "text_pixel_delta": len(prod_text) - len(ref_text),
+        "text_union_pixels": len(text_union),
+        "exact_text_overlap_ratio": exact_overlap / max(1, len(ref_text | prod_text)),
+        "ref_near_production_ratio": ref_near_prod / max(1, len(ref_text)),
+        "production_near_reference_ratio": prod_near_ref / max(1, len(prod_text)),
+        "masked_text_mad": text_diff / max(1, len(text_union)),
+        "card_background_mad": background_diff / max(1, background_count),
+    }
+
+
+def compare_visual_similarity(similarity: Dict[str, Any]) -> Dict[str, Any]:
+    checks = []
+
+    def add(name: str, actual: float, expected: float, tolerance: float, *, minimum: bool = False, maximum: bool = False) -> None:
+        if minimum:
+            ok = actual >= expected
+            delta = actual - expected
+        elif maximum:
+            ok = actual <= expected
+            delta = actual - expected
+        else:
+            delta = actual - expected
+            ok = abs(delta) <= tolerance
+        checks.append(
+            {
+                "name": name,
+                "actual": actual,
+                "expected": expected,
+                "delta": delta,
+                "tolerance": tolerance,
+                "ok": ok,
+            }
+        )
+
+    add("text_pixel_delta", similarity["text_pixel_delta"], 0, 160)
+    add("ref_near_production_ratio", similarity["ref_near_production_ratio"], 0.772, 0, minimum=True)
+    add("production_near_reference_ratio", similarity["production_near_reference_ratio"], 0.780, 0, minimum=True)
+    add("masked_text_mad", similarity["masked_text_mad"], 121, 0, maximum=True)
+    add("card_background_mad", similarity["card_background_mad"], 7.5, 0, maximum=True)
+    return {"ok": all(check["ok"] for check in checks), "checks": checks}
+
+
 def write_sheet(reference: Image.Image, production_frame: Image.Image, path: Path) -> None:
     crop_box = (70, 300, 1010, 530)
     scale = 3
@@ -250,8 +350,10 @@ def main() -> int:
     reference_color = measure_text_color_split(reference, reference_metrics["card_bbox"])
     production_color = measure_text_color_split(production_frame, production_metrics["card_bbox"])
     emoji_comparison = compare_emoji(reference_color, production_color)
+    visual_similarity = masked_card_similarity(reference, production_frame, reference_metrics["card_bbox"])
+    visual_comparison = compare_visual_similarity(visual_similarity)
     payload = {
-        "ok": comparison["ok"] and emoji_comparison["ok"],
+        "ok": comparison["ok"] and emoji_comparison["ok"] and visual_comparison["ok"],
         "reference_phrase": REFERENCE_PHRASE,
         "rendered_hook": rendered_hook,
         "font": list(top_hook_card_font(34).getname()),
@@ -262,6 +364,8 @@ def main() -> int:
         "production_color": production_color,
         "comparison": comparison,
         "emoji_comparison": emoji_comparison,
+        "visual_similarity": visual_similarity,
+        "visual_comparison": visual_comparison,
         "sheet": str(args.out_dir / "reference-vs-production-top-card-3x.jpg"),
         "overlay": str(overlay_path),
     }
