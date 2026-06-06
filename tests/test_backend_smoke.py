@@ -814,12 +814,58 @@ class BackendSmokeTests(unittest.TestCase):
                         "hook_card": "Max got tired of Jason and Silky green screening his stream",
                         "hook_card_persistent": True,
                         "caption_beats": ["THIS IS", "WHAT YOU", "SUPPORTED", "WAIT FOR", "IT NOW"],
+                        "caption_timeline": [
+                            {
+                                "start": 0.30,
+                                "end": 0.72,
+                                "text": "THIS IS",
+                                "timing_mode": "ensemble_consensus",
+                                "model_votes": 4,
+                                "vote_spread_seconds": 0.08,
+                            },
+                            {
+                                "start": 0.82,
+                                "end": 1.24,
+                                "text": "WHAT YOU",
+                                "timing_mode": "ensemble_consensus",
+                                "model_votes": 4,
+                                "vote_spread_seconds": 0.08,
+                            },
+                        ],
                     },
                 }
             ),
             encoding="utf-8",
         )
         self.assertEqual(db._render_text_manifest_blockers(manifest), [])
+
+        manifest.write_text(
+            json.dumps(
+                {
+                    "profile": db.CAMPAIGN_SHORT_PROFILE,
+                    "caption_only": False,
+                    "rendered_text": {
+                        "layout": "summary_hook_caption",
+                        "hook_card_visible": True,
+                        "hook_card": "Max got tired of Jason and Silky green screening his stream",
+                        "hook_card_persistent": True,
+                        "caption_beats": ["THIS IS"],
+                        "caption_timeline": [
+                            {
+                                "start": 0.30,
+                                "end": 0.72,
+                                "text": "THIS IS",
+                                "timing_mode": "strong_model_anchor",
+                                "model_votes": 1,
+                                "vote_spread_seconds": 0.0,
+                            }
+                        ],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.assertTrue(any("weak strong-anchor" in item for item in db._render_text_manifest_blockers(manifest)))
 
         manifest.write_text(
             json.dumps(

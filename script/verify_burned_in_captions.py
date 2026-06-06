@@ -247,7 +247,7 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
                 f"top hook card padding left={left_pad}, right={right_pad} does not match reference card spacing"
             ),
             "bbox": [left, top, right, bottom],
-            "text_bbox": [text_left, min(text_ys), text_right, max(text_ys) + 1],
+            "text_bbox": [text_left, text_top, text_right, text_bottom],
             "left_pad": left_pad,
             "right_pad": right_pad,
         }

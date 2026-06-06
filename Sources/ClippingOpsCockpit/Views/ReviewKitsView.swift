@@ -664,10 +664,13 @@ private struct ReviewPlaybackControls: View {
             .accessibilityLabel("Forward 5 seconds")
             .accessibilityIdentifier("review-kit-playback-forward")
 
-            Text(timecode(isScrubbing ? scrubValue : playback.currentTime))
+            Text(currentTimecode)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 44, alignment: .trailing)
+                .accessibilityLabel("Preview current time")
+                .accessibilityValue(currentTimecode)
+                .accessibilityIdentifier("review-kit-playback-current-time")
 
             Slider(
                 value: Binding(
@@ -689,10 +692,13 @@ private struct ReviewPlaybackControls: View {
             .accessibilityLabel("Preview scrubber")
             .accessibilityIdentifier("review-kit-playback-scrubber")
 
-            Text(timecode(playback.duration))
+            Text(durationTimecode)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 44, alignment: .leading)
+                .accessibilityLabel("Preview duration")
+                .accessibilityValue(durationTimecode)
+                .accessibilityIdentifier("review-kit-playback-duration")
 
             Button {
                 playback.toggleMuted()
@@ -717,6 +723,14 @@ private struct ReviewPlaybackControls: View {
                 scrubValue = value
             }
         }
+    }
+
+    private var currentTimecode: String {
+        timecode(isScrubbing ? scrubValue : playback.currentTime)
+    }
+
+    private var durationTimecode: String {
+        timecode(playback.duration)
     }
 
     private func timecode(_ seconds: Double) -> String {

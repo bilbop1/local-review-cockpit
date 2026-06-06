@@ -225,10 +225,10 @@ The system must reject:
 
 Current editorial floors:
 
-- YourRAGE: 1,500 views.
+- YourRAGE: 1,350 views.
 - PlaqueBoyMax: 1,500 views.
 - JasonTheWeen: 2,000 views.
-- Max automatic duration: 52 seconds.
+- Max automatic duration: 52 seconds unless a deliberate shorter manual cut is stored with `clip_start_seconds` / `clip_end_seconds`.
 
 The system should prefer 9 good kits over 15 padded kits.
 

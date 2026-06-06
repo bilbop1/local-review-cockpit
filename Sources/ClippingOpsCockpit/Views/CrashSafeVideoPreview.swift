@@ -104,6 +104,8 @@ final class ReviewVideoPlaybackController: ObservableObject {
     func restart() {
         guard let player else { return }
         userPaused = false
+        currentTime = 0.0
+        isPlaying = true
         player.seek(to: CMTime(seconds: 0.0, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak player] _ in
             Task { @MainActor in
                 guard let self, let player else { return }
@@ -117,6 +119,7 @@ final class ReviewVideoPlaybackController: ObservableObject {
     func seek(to seconds: Double) {
         guard let player else { return }
         let clamped = max(0, min(seconds, max(duration, 0)))
+        currentTime = clamped
         player.seek(
             to: CMTime(seconds: clamped, preferredTimescale: 600),
             toleranceBefore: .zero,

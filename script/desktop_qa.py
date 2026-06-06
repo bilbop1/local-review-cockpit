@@ -376,6 +376,89 @@ end tell
     return result.returncode == 0
 
 
+def select_review_filter(label: str) -> bool:
+    quoted = json.dumps(label)
+    script = f'''
+tell application "System Events"
+  tell process "{APP_PROCESS}"
+    set elems to entire contents of front window
+    repeat with e in elems
+      try
+        if role of e is "AXRadioButton" then
+          set haystack to ""
+          try
+            set n to name of e
+            if n is not missing value then set haystack to haystack & " " & (n as text)
+          end try
+          try
+            set d to description of e
+            if d is not missing value then set haystack to haystack & " " & (d as text)
+          end try
+          if haystack contains {quoted} then
+            click e
+            return "clicked"
+          end if
+        end if
+      end try
+    end repeat
+    return "missing"
+  end tell
+end tell
+'''
+    result = subprocess.run(["osascript"], input=script, text=True, capture_output=True)
+    return result.returncode == 0 and "clicked" in result.stdout
+
+
+def click_first_review_row() -> bool:
+    script = f'''
+tell application "System Events"
+  tell process "{APP_PROCESS}"
+    set elems to entire contents of front window
+    repeat with e in elems
+      try
+        set rawIdentifier to value of attribute "AXIdentifier" of e
+        if rawIdentifier is not missing value then
+          set identifierValue to rawIdentifier as text
+          if identifierValue starts with "review-kit-row-" then
+            click e
+            return "clicked"
+          end if
+        end if
+      end try
+    end repeat
+    return "missing"
+  end tell
+end tell
+'''
+    result = subprocess.run(["osascript"], input=script, text=True, capture_output=True)
+    return result.returncode == 0 and "clicked" in result.stdout
+
+
+def ensure_review_kit_selected(manifest: Dict[str, Any]) -> None:
+    filter_label = "Approved"
+    filter_ok = select_review_filter(filter_label)
+    if not filter_ok:
+        filter_label = "All"
+        filter_ok = select_review_filter(filter_label)
+    time.sleep(0.6)
+    row_ok = click_first_review_row()
+    time.sleep(1.2)
+    selected = bool(row_ok and review_detail_title())
+    manifest.setdefault("controls", []).append(
+        {
+            "name": "Select review kit for playback QA",
+            "surface": "Review Kits list",
+            "filter": filter_label,
+            "filter_selected": bool(filter_ok),
+            "row_clicked": bool(row_ok),
+            "selected_title": review_detail_title(),
+            "ok": selected,
+        }
+    )
+    if not selected:
+        raise RuntimeError("could not select an active review kit for playback QA")
+
+
 def review_playback_times() -> List[str]:
     script = f'''
 tell application "System Events"
@@ -400,7 +483,23 @@ end tell
     result = subprocess.run(["osascript"], input=script, text=True, capture_output=True)
     if result.returncode != 0:
         return []
-    return [line.strip() for line in result.stdout.splitlines() if re.fullmatch(r"\d+:\d{2}", line.strip())]
+    values: List[str] = []
+    for line in result.stdout.splitlines():
+        value = line.strip()
+        if not re.fullmatch(r"\d+:\d{2}", value):
+            continue
+        values.append(value)
+    return values
+
+
+def review_playback_times_until(attempts: int = 6, delay: float = 0.2) -> List[str]:
+    latest: List[str] = []
+    for _ in range(attempts):
+        latest = review_playback_times()
+        if len(latest) >= 2:
+            return latest
+        time.sleep(delay)
+    return latest
 
 
 def click_review_button_by_help(help_text: str) -> bool:
@@ -544,21 +643,21 @@ def timecode_seconds(values: List[str]) -> int | None:
 def verify_review_playback_controls(manifest: Dict[str, Any], name: str = "Playback Controls") -> None:
     restart_ok = click_review_playback_control("Restart preview", "review-kit-playback-restart")
     time.sleep(0.8)
-    start_times = review_playback_times()
+    start_times = review_playback_times_until()
     pause_ok = click_review_playback_control("Pause preview", "review-kit-playback-toggle")
     time.sleep(0.2)
-    after_pause_click = review_playback_times()
+    after_pause_click = review_playback_times_until()
     time.sleep(0.9)
-    after_pause_wait = review_playback_times()
+    after_pause_wait = review_playback_times_until()
     forward_ok = click_review_playback_control("Forward 5 seconds", "review-kit-playback-forward")
     time.sleep(0.5)
-    after_forward = review_playback_times()
+    after_forward = review_playback_times_until()
     back_ok = click_review_playback_control("Back 5 seconds", "review-kit-playback-back")
     time.sleep(0.4)
-    after_back = review_playback_times()
+    after_back = review_playback_times_until()
     play_ok = click_review_playback_control("Play preview", "review-kit-playback-toggle")
     time.sleep(1.0)
-    after_play = review_playback_times()
+    after_play = review_playback_times_until()
     mute_ok = click_review_playback_control("Mute preview", "review-kit-playback-mute")
     time.sleep(0.2)
     unmute_ok = click_review_playback_control("Unmute preview", "review-kit-playback-mute")
@@ -747,7 +846,7 @@ def run_command_action(name: str, keys: Tuple[str, ...], verifier, manifest: Dic
 
 
 def render_review_frame(manifest: Dict[str, Any]) -> None:
-    if not api_get("/api/review-kits"):
+    if not approved_green_review_kits():
         manifest.setdefault("media", []).append(
             {
                 "name": "review-media-blocked",
@@ -833,9 +932,9 @@ def probe_review_video(path: str) -> Dict[str, Any]:
 
 def wait_for_review_media_ready(timeout: float = 90.0) -> Tuple[str, Dict[str, Any]]:
     deadline = time.time() + timeout
-    last_error = "no review kits"
+    last_error = "no approved green review kits"
     while time.time() < deadline:
-        kits = api_get("/api/review-kits")
+        kits = approved_green_review_kits()
         for kit in kits:
             path = kit.get("review_video_path", "")
             if not path or not Path(path).exists():
@@ -848,8 +947,18 @@ def wait_for_review_media_ready(timeout: float = 90.0) -> Tuple[str, Dict[str, A
     raise RuntimeError(f"review media was not ffprobe-ready within {timeout:.0f}s: {last_error}")
 
 
+def approved_green_review_kits() -> List[Dict[str, Any]]:
+    kits = api_get("/api/review-kits")
+    return [
+        kit
+        for kit in kits
+        if str(kit.get("review_status", "")) == "approved_manual_prep"
+        and str(kit.get("campaign_proof_status", "")) == "green"
+    ]
+
+
 def verify_review_actions(manifest: Dict[str, Any]) -> None:
-    if not api_get("/api/review-kits"):
+    if not approved_green_review_kits():
         manifest.setdefault("controls", []).append(
             {
                 "name": "Review decisions blocked without media",
@@ -871,7 +980,7 @@ def verify_review_actions(manifest: Dict[str, Any]) -> None:
             }
         )
         return
-    kits = api_get("/api/review-kits")
+    kits = approved_green_review_kits()
     if not kits:
         manifest.setdefault("controls", []).append({"name": "review decisions blocked without kits", "ok": True, "detail": "no active campaign kits"})
         return
@@ -1224,6 +1333,7 @@ def main() -> int:
             print(f"clicked page-{slug}")
 
         click_sidebar(122, "Review Kits preview load", manifest, expected_title="Review Kits")
+        ensure_review_kit_selected(manifest)
         autoplay_start = capture_window("page-review-kits-autoplay-start", manifest)
         time.sleep(3.0)
         autoplay_ready = capture_window("page-review-kits-autoplay-ready", manifest)

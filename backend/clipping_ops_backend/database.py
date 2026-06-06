@@ -18,7 +18,7 @@ from .caption_style import caption_beat_violations, caption_text_quality_violati
 
 APP_NAME = "ClippingOpsCockpit"
 FRESH_EVIDENCE_HOURS = 24
-CAMPAIGN_RECENT_CLIP_DAYS = 35
+CAMPAIGN_RECENT_CLIP_DAYS = 40
 SELECTED_FEEDER_FLAGS = (
     "selected_feeder_yourrage",
     "selected_feeder_yourragegaming",
@@ -214,7 +214,7 @@ WEAK_RENDERED_HOOKS = {
     "o7 l bmw",
 }
 EDITORIAL_MIN_VIEWS_BY_CAMPAIGN = {
-    "yourrage": 1_500,
+    "yourrage": 1_350,
     "plaqueboymax": 1_500,
     "jasontheween": 2_000,
 }
@@ -1530,11 +1530,14 @@ def visible_render_kits() -> List[Dict[str, Any]]:
     visible: List[Dict[str, Any]] = []
     for item in rows("SELECT * FROM render_kits"):
         nomination = one("SELECT * FROM render_nominations WHERE id = ?", (str(item.get("nomination_id", "")),))
-        if not campaign_slug_for_kit(item, nomination):
+        campaign_slug = campaign_slug_for_kit(item, nomination)
+        if not campaign_slug:
             continue
         if int(item.get("is_demo", 0) or 0) == 1:
             continue
-        if str(item.get("nomination_id", "")) not in visible_nomination_ids:
+        proof_status = production_feeder_kit_status(item).get("classification")
+        protected_green_campaign_kit = is_active_campaign_project(campaign_slug) and proof_status == "green"
+        if str(item.get("nomination_id", "")) not in visible_nomination_ids and not protected_green_campaign_kit:
             continue
         if contains_irrelevant_review_token(
             item.get("title"),
@@ -1543,11 +1546,10 @@ def visible_render_kits() -> List[Dict[str, Any]]:
             item.get("transcript_path"),
             item.get("source_path"),
             item.get("risk_path"),
-        ):
+        ) and not protected_green_campaign_kit:
             continue
         if not Path(str(item.get("review_video_path", ""))).exists():
             continue
-        proof_status = production_feeder_kit_status(item).get("classification")
         if proof_status not in {"green", "yellow"}:
             continue
         visible.append(enrich_render_kit_with_clip_metadata(item))
@@ -1763,6 +1765,21 @@ def editorial_min_views_for_campaign(slug: str) -> int:
     return int(EDITORIAL_MIN_VIEWS_BY_CAMPAIGN.get(normalize_campaign_slug(slug), EDITORIAL_DEFAULT_MIN_VIEWS))
 
 
+def effective_clip_duration_seconds(clip: Dict[str, Any]) -> float:
+    try:
+        start = float(clip.get("clip_start_seconds", 0) or 0)
+        end = float(clip.get("clip_end_seconds", 0) or 0)
+    except (TypeError, ValueError):
+        start = 0.0
+        end = 0.0
+    if end > start:
+        return max(0.0, end - start)
+    try:
+        return float(clip.get("duration", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _normalized_editorial_title(title: Any) -> str:
     return re.sub(r"\s+", " ", str(title or "").strip()).lower()
 
@@ -1776,7 +1793,7 @@ def editorial_candidate_gate(clip: Dict[str, Any], campaign_slug: str = "") -> D
     slug = _editorial_campaign_slug_for_clip(clip, campaign_slug)
     title = _normalized_editorial_title(clip.get("title", ""))
     views = int(clip.get("view_count", 0) or 0)
-    duration = float(clip.get("duration", 0) or 0)
+    duration = effective_clip_duration_seconds(clip)
     min_views = editorial_min_views_for_campaign(slug)
     blockers: List[str] = []
     warnings: List[str] = []
@@ -2005,12 +2022,41 @@ def _render_text_manifest_blockers(path: Path) -> List[str]:
             blockers.append("campaign final render requires a viewer-facing top summary hook card")
         elif normalized_hook in WEAK_RENDERED_HOOKS or len(hook_words) < 5:
             blockers.append("viewer hook card is too weak or shorthand for production proof")
+        blockers.extend(_caption_timeline_consensus_blockers(rendered))
     elif caption_only:
         if len(caption_beats) < 3 or caption_word_count < 8:
             blockers.append("caption-only render has too few burned-in caption beats")
     elif normalized_hook in WEAK_RENDERED_HOOKS or len(hook_words) < 3:
         blockers.append("viewer hook card is too weak or shorthand for production proof")
     return blockers
+
+
+def _caption_timeline_consensus_blockers(rendered: Dict[str, Any]) -> List[str]:
+    timeline = rendered.get("caption_timeline", []) if isinstance(rendered, dict) else []
+    if not isinstance(timeline, list) or not timeline:
+        return ["caption timeline missing from render manifest"]
+    blockers: List[str] = []
+    for index, item in enumerate(timeline, start=1):
+        if not isinstance(item, dict):
+            blockers.append(f"caption {index}: timing entry is malformed")
+            continue
+        text = str(item.get("text", "")).strip()
+        mode = str(item.get("timing_mode", "")).strip().lower()
+        try:
+            votes = int(item.get("model_votes", 0) or 0)
+            spread = float(item.get("vote_spread_seconds", 0) or 0)
+            start = float(item.get("start", 0) or 0)
+            end = float(item.get("end", 0) or 0)
+        except (TypeError, ValueError):
+            blockers.append(f"caption {index}: timing values are invalid")
+            continue
+        if end <= start:
+            blockers.append(f"caption {index}: timing window is invalid")
+        if mode == "ensemble_consensus" and (votes < 3 or spread > 0.85):
+            blockers.append(f"caption {index}: weak ensemble timing consensus for `{text}`")
+        elif mode == "strong_model_anchor" and (votes < 2 or spread > 0.35):
+            blockers.append(f"caption {index}: weak strong-anchor timing consensus for `{text}`")
+    return blockers[:8]
 
 
 def production_feeder_kit_status(kit: Dict[str, Any]) -> Dict[str, Any]:
@@ -2600,29 +2646,39 @@ def prune_irrelevant_review_surface(archive_files: bool = True) -> Dict[str, Any
         )
         or any(clip_id in str(item.get("clip_candidate_ids_json", "")) for clip_id in bad_clips)
     ]
-    bad_kits = [
-        item
-        for item in rows("SELECT * FROM render_kits")
-        if int(item.get("is_demo", 0) or 0) == 1
-        or str(item.get("nomination_id", "")) in bad_nominations
-        or contains_irrelevant_review_token(
+    bad_kits: List[Dict[str, Any]] = []
+    for item in rows("SELECT * FROM render_kits"):
+        nomination = one("SELECT * FROM render_nominations WHERE id = ?", (str(item.get("nomination_id", "")),))
+        campaign_slug = campaign_slug_for_kit(item, nomination)
+        proof_status = production_feeder_kit_status(item)
+        if is_active_campaign_project(campaign_slug) and proof_status.get("classification") == "green":
+            continue
+        if int(item.get("is_demo", 0) or 0) == 1:
+            bad_kits.append(item)
+            continue
+        if str(item.get("nomination_id", "")) in bad_nominations:
+            bad_kits.append(item)
+            continue
+        if contains_irrelevant_review_token(
             item.get("title"),
             item.get("review_video_path"),
             item.get("caption_path"),
             item.get("transcript_path"),
             item.get("source_path"),
             item.get("risk_path"),
-        )
-        or any(
+        ):
+            bad_kits.append(item)
+            continue
+        if any(
             "viewer hook card is too weak" in blocker
             or "Lacy clip does not prove arrested/missing-in-action" in blocker
             or "Lacy #lacy caption requirement not proven" in blocker
             or "editorial gate:" in blocker
             or "unnecessary facecam-top composition" in blocker
-            or "clip has " in blocker and "editorial floor" in blocker
-            for blocker in production_feeder_kit_status(item).get("blockers", [])
-        )
-    ]
+            or ("clip has " in blocker and "editorial floor" in blocker)
+            for blocker in proof_status.get("blockers", [])
+        ):
+            bad_kits.append(item)
     bad_jobs = [
         str(item["id"])
         for item in rows("SELECT * FROM job_runs")

@@ -148,6 +148,40 @@ def measure_text_color_split(image: Image.Image, card: list[int]) -> Dict[str, A
     return payload
 
 
+def measure_ink_profile(image: Image.Image, card: list[int]) -> Dict[str, Any]:
+    rgba = image.convert("RGBA")
+    pixels = rgba.load()
+    left, top, right, bottom = card
+    dark_luma = []
+    emoji_count = 0
+    for y in range(top + 4, bottom - 4):
+        for x in range(left + 4, right - 4):
+            r, g, b, a = pixels[x, y]
+            if a < 80 or (r > 245 and g > 245 and b > 245):
+                continue
+            is_color_emoji = max(r, g, b) >= 120 and max(r, g, b) - min(r, g, b) >= 50
+            if is_color_emoji:
+                emoji_count += 1
+                continue
+            is_dark_text = r < 112 and g < 112 and b < 112 and max(r, g, b) - min(r, g, b) < 64
+            if is_dark_text:
+                dark_luma.append((r + g + b) / 3)
+    if not dark_luma:
+        raise RuntimeError("top card ink profile could not be measured")
+    values = sorted(dark_luma)
+    black_pixels = sum(1 for value in dark_luma if value < 20)
+    edge_pixels = len(dark_luma) - black_pixels
+    return {
+        "dark_text_pixels": len(dark_luma),
+        "emoji_pixels": emoji_count,
+        "mean_luma": sum(dark_luma) / len(dark_luma),
+        "median_luma": values[len(values) // 2],
+        "p90_luma": values[max(0, int(len(values) * 0.9) - 1)],
+        "black_pixel_ratio": black_pixels / max(1, len(dark_luma)),
+        "edge_pixel_ratio": edge_pixels / max(1, len(dark_luma)),
+    }
+
+
 def compare(reference: Dict[str, Any], production: Dict[str, Any]) -> Dict[str, Any]:
     checks = []
 
@@ -204,6 +238,29 @@ def compare_emoji(reference: Dict[str, Any], production: Dict[str, Any]) -> Dict
     add("emoji_color_bottom", prod_box[3], ref_box[3], 3)
     add("emoji_color_center_x", production["emoji_color_center_x"], reference["emoji_color_center_x"], 4)
     add("emoji_color_width", production["emoji_color_width"], reference["emoji_color_width"], 8)
+    return {"ok": all(check["ok"] for check in checks), "checks": checks}
+
+
+def compare_ink_profile(reference: Dict[str, Any], production: Dict[str, Any]) -> Dict[str, Any]:
+    checks = []
+
+    def add(name: str, actual: float, expected: float, tolerance: float) -> None:
+        delta = actual - expected
+        checks.append(
+            {
+                "name": name,
+                "actual": actual,
+                "expected": expected,
+                "delta": delta,
+                "tolerance": tolerance,
+                "ok": abs(delta) <= tolerance,
+            }
+        )
+
+    add("mean_luma", production["mean_luma"], reference["mean_luma"], 3.0)
+    add("black_pixel_ratio", production["black_pixel_ratio"], reference["black_pixel_ratio"], 0.04)
+    add("edge_pixel_ratio", production["edge_pixel_ratio"], reference["edge_pixel_ratio"], 0.04)
+    add("p90_luma", production["p90_luma"], reference["p90_luma"], 11)
     return {"ok": all(check["ok"] for check in checks), "checks": checks}
 
 
@@ -350,10 +407,13 @@ def main() -> int:
     reference_color = measure_text_color_split(reference, reference_metrics["card_bbox"])
     production_color = measure_text_color_split(production_frame, production_metrics["card_bbox"])
     emoji_comparison = compare_emoji(reference_color, production_color)
+    reference_ink = measure_ink_profile(reference, reference_metrics["card_bbox"])
+    production_ink = measure_ink_profile(production_frame, production_metrics["card_bbox"])
+    ink_comparison = compare_ink_profile(reference_ink, production_ink)
     visual_similarity = masked_card_similarity(reference, production_frame, reference_metrics["card_bbox"])
     visual_comparison = compare_visual_similarity(visual_similarity)
     payload = {
-        "ok": comparison["ok"] and emoji_comparison["ok"] and visual_comparison["ok"],
+        "ok": comparison["ok"] and emoji_comparison["ok"] and ink_comparison["ok"] and visual_comparison["ok"],
         "reference_phrase": REFERENCE_PHRASE,
         "rendered_hook": rendered_hook,
         "font": list(top_hook_card_font(34).getname()),
@@ -362,8 +422,11 @@ def main() -> int:
         "production": production_metrics,
         "reference_color": reference_color,
         "production_color": production_color,
+        "reference_ink": reference_ink,
+        "production_ink": production_ink,
         "comparison": comparison,
         "emoji_comparison": emoji_comparison,
+        "ink_comparison": ink_comparison,
         "visual_similarity": visual_similarity,
         "visual_comparison": visual_comparison,
         "sheet": str(args.out_dir / "reference-vs-production-top-card-3x.jpg"),

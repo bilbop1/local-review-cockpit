@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
-from PIL import Image, ImageDraw, ImageFont, ImageStat
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = ROOT / "backend"
@@ -270,7 +270,7 @@ def draw_mixed_text_visual_top(
     # TikTok's native card places Apple-style emoji slightly higher and more
     # centered than Pillow's default mixed-text baseline.
     emoji_x_offset = -1
-    emoji_y_offset = -7
+    emoji_y_offset = -6
     for is_emoji, run_text in mixed_text_runs(text):
         run_font = emoji_font if is_emoji and emoji_font is not None else style_font
         bbox = draw.textbbox((0, 0), run_text, font=run_font)
@@ -814,6 +814,9 @@ HOOK_OVERRIDES = {
     "clip_c34ba7160d61": "YourRAGE pictured Agent dancing exactly like this",
     "clip_3c2685fa51d2": "Jason tried the windup and instantly regretted it",
     "clip_114cbd99f552": "Jason had to explain why his friend was there",
+    "clip_ad2bf19b8fb1": "Max heard his own JB song moment live on stream",
+    "clip_9088267d79b1": "Max asked Ye about the stage design after the record",
+    "clip_acaeded1ce1c": "YourRAGE watched a scary car meet moment unfold",
 }
 
 MIN_CAPTION_BEAT_DURATION = 0.16
@@ -1075,7 +1078,7 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
     title_font = top_hook_card_font(34)
     emoji_font = top_hook_emoji_font(40)
     lines: List[str] = []
-    for font_size in (34, 33, 32, 31, 30, 29, 28):
+    for font_size in range(34, 27, -1):
         candidate_font = top_hook_card_font(font_size)
         candidate_emoji_font = top_hook_emoji_font(40)
         candidate_lines = _reference_top_hook_lines(draw, hook, candidate_font, candidate_emoji_font, text_max_width)
@@ -1095,6 +1098,11 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         return ""
     text_fill = (0, 0, 0, 255)
     line_heights = [mixed_text_size(draw, line, title_font, emoji_font)[1] for line in lines]
+    gap = 10
+    text_block_height = sum(line_heights) + max(0, len(line_heights) - 1) * gap
+    if len(lines) == 2 and text_block_height <= 82:
+        gap = 12
+        text_block_height = sum(line_heights) + gap
     visual_line_widths = [mixed_text_visual_width(line, title_font, emoji_font, text_fill) for line in lines]
     # The TikTok reference hugs the text block with consistent left/right
     # padding. Long hooks reach the reference max width; shorter hooks should
@@ -1105,9 +1113,7 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         card_width = min(max_card_width, max(330, max(visual_line_widths) + 46))
     card_left = int(round((720 - card_width) / 2))
     text_left = card_left + 21
-    gap = 10
-    text_block_height = sum(line_heights) + max(0, len(line_heights) - 1) * gap
-    card_height = max(64, min(105, text_block_height + 16))
+    card_height = max(100, min(101, text_block_height + 16))
     draw.rounded_rectangle(
         (card_left + 2, card_top + 3, card_left + card_width + 2, card_top + card_height + 3),
         radius=14,
@@ -1118,10 +1124,14 @@ def headline_card(path: Path, title: str, handle: str, transcript_text: str = ""
         radius=14,
         fill=(255, 255, 255, 255),
     )
+    text_layer = Image.new("RGBA", logical.size, (0, 0, 0, 0))
+    text_draw = ImageDraw.Draw(text_layer, "RGBA")
     y = text_top
     for line, line_height in zip(lines, line_heights):
-        draw_mixed_text_visual_top(draw, line, text_left, y, title_font, emoji_font, text_fill)
+        draw_mixed_text_visual_top(text_draw, line, text_left, y, title_font, emoji_font, text_fill)
         y += line_height + gap
+    text_layer = text_layer.filter(ImageFilter.GaussianBlur(0.22))
+    logical = Image.alpha_composite(logical, text_layer)
     image = logical.resize((1080, 1920), Image.Resampling.LANCZOS)
     image = stretch_visible_overlay_y(image, 1.052)
     image.save(path)

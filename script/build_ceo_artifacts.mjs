@@ -443,6 +443,8 @@ async function main() {
       createdAt: kit.clip_created_at || "",
       views: kit.clip_view_count || 0,
       campaign: kit.campaign_name || kit.campaign_slug || "Unlinked",
+      reviewStatus: kit.review_status || "",
+      proofStatus: kit.campaign_proof_status || "",
       hasCampaignLink: Boolean(kit.campaign_slug),
       hasSourceEvidence: /source_media_verified_local|source_download_verified|local media:/i.test(sourceText),
       hasGreenCritique: /status:\s*green/i.test(critiqueText),
@@ -455,9 +457,12 @@ async function main() {
     && row.hasGreenCritique
     && row.hasNoBurnedInternalText
   ));
-  const campaignBriefSummary = `${campaignGreenRows.length}/${reviewKits.length} active campaign review kit(s) are linked to active campaign projects, have source evidence, a green critique, and no burned-in internal proof/review/demo text.`;
+  const campaignProofGreenRows = campaignGreenRows.filter((row) => (
+    row.reviewStatus === "approved_manual_prep" && row.proofStatus === "green"
+  ));
+  const campaignBriefSummary = `${campaignGreenRows.length}/${reviewKits.length} active campaign review kit(s) are linked to active campaign projects, have source evidence, a green critique, and no burned-in internal proof/review/demo text; ${campaignProofGreenRows.length} are approved green proof kits.`;
   const burnedCaptionSummary = `${burnedCaptions.ok ? "PASS" : "FAIL"}: ${burnedCaptions.kit_count || 0} active kit(s) checked by extracted-frame pixel comparison; caption sidecars alone are not accepted as subtitle proof.`;
-  const campaignClipLines = campaignGreenRows
+  const campaignClipLines = campaignProofGreenRows
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
     .map((row) => `- ${row.createdAt || "unknown time"}: ${row.campaign} - ${row.title} (${row.views} views)`)
     .join("\n") || "- No active campaign-linked production kits.";
@@ -509,7 +514,7 @@ async function main() {
     : "There is no fresh local reference-style study to hide behind. The campaign final profile is the only evidence that matters now because it is tied to approved campaign sources and evidence instead of demo footage.";
   const bluntRendererCritique = [
     renderProofIsGreen
-      ? `The renderer now has ${campaignGreenRows.length} green campaign final kit(s) from local source media, stored campaign rules, timed transcript evidence, and burned-in subtitle frame proof. This proves campaign-scoped review mechanics; it still does not prove autonomous publishing or customer distribution.`
+      ? `The renderer now has ${campaignProofGreenRows.length} approved green campaign final kit(s) from local source media, stored campaign rules, timed transcript evidence, and burned-in subtitle frame proof. Yellow/rejected timing-history kits remain audit records only. This proves campaign-scoped review mechanics; it still does not prove autonomous publishing or customer distribution.`
       : referenceCritiqueLead,
     "Against the stored rubric, active campaign outputs should use the white headline card, central crop, side-fill background, and fast captions while avoiding internal labels or fake proof language.",
     demoRootBatchBroken
@@ -591,7 +596,7 @@ ${bluntRendererCritique}
 
 ## Campaign Batch Compliance
 
-${activeCampaignLine} The final buddy book/install wrap-up stays blocked until each active campaign has five individually approved review kits in the GUI. Haste remains excluded because content generation without linked source media is out of scope.
+${activeCampaignLine} The final buddy book/install wrap-up is green only while each active campaign has five individually approved green proof kits in the GUI. Haste remains excluded because content generation without linked source media is out of scope.
 
 Latest streamer-first re-index:
 
