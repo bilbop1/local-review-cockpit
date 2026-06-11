@@ -12,7 +12,7 @@ Generated: 2026-06-06T04:10:21.909Z
 - Production green: true
 - Readiness overall: green
 
-All CEO gates are green from current evidence. Real campaign rendering is still limited to the nomination/review workflow; publishing, uploads, payouts, and account changes remain blocked.
+All CEO gates are green from current evidence. Real campaign rendering is still limited to the nomination/review workflow; posting is gated by provider readiness, account warm-up, and final confirmation while payouts and account changes remain blocked.
 
 ## Evidence
 
@@ -59,11 +59,12 @@ All CEO gates are green from current evidence. Real campaign rendering is still 
 - **GREEN** Codex source handoff package: mode=source_build_handoff; zip=/Users/bilbop/Documents/Codex/CLippentAgent/artifacts/handoff/ClippingOpsCockpit-codex-handoff-20260606T040222Z.zip; files=95; secrets_transferred=False; fresh=True age_hours=0.13
 - **YELLOW** Prebuilt Mac app signing/notarization: bundle=True; signed=True; identity=adhoc; notarized=False; fresh=True; blocker: Only required for handing someone a prebuilt .app. Codex source handoff can be green without Developer ID notarization.
 - **GREEN** Product proof artifacts: artifact_summary=/Users/bilbop/Documents/Codex/CLippentAgent/artifacts/product-proof/artifact-summary.json; fresh=True age_hours=0.03
-- **GREEN** Human approval only: Autopublish/payout/account changes are hard-blocked in backend routes.
+- **YELLOW** Autopost readiness: Upload-Post live posting stays yellow until provider key, account warm-up, live mode, and confirmation proof exist.
+- **GREEN** Human-confirmed publishing gate: Posting is locked behind approved review kit, provider config, completed warm-up, and final GUI confirmation. Payout/account changes remain blocked.
 
 ## Video Output Critique
 
-The renderer now has 15 approved green campaign final kit(s) from local source media, stored campaign rules, timed transcript evidence, and burned-in subtitle frame proof. Yellow/rejected timing-history kits remain audit records only. This proves campaign-scoped review mechanics; it still does not prove autonomous publishing or customer distribution.
+The renderer now has 15 approved green campaign final kit(s) from local source media, stored campaign rules, timed transcript evidence, and burned-in subtitle frame proof. Yellow/rejected timing-history kits remain audit records only. This proves campaign-scoped review mechanics; posting still requires provider readiness, account warm-up, and final confirmation.
 
 Against the stored rubric, active campaign outputs should use the white headline card, central crop, side-fill background, and fast captions while avoiding internal labels or fake proof language.
 

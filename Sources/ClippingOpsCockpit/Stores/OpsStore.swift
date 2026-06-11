@@ -14,6 +14,7 @@ final class OpsStore: ObservableObject {
     @Published var platformState: PlatformState?
     @Published var readiness: ReadinessReport?
     @Published var workspaceProfile: WorkspaceProfile?
+    @Published var publishStatus: PublishStatus?
     @Published var agents: AgentsResponse?
     @Published var auditEvents: [AuditEvent] = []
     @Published var isLoading = false
@@ -59,6 +60,7 @@ final class OpsStore: ObservableObject {
             async let platformState: PlatformState = client.get("platforms")
             async let readiness: ReadinessReport = client.get("readiness")
             async let workspaceProfile: WorkspaceProfile = client.get("workspace-profile")
+            async let publishStatus: PublishStatus = client.get("publish/status")
             async let agents: AgentsResponse = client.get("agents")
             async let audit: [AuditEvent] = client.get("audit")
 
@@ -74,6 +76,7 @@ final class OpsStore: ObservableObject {
             self.platformState = try await platformState
             self.readiness = try await readiness
             self.workspaceProfile = try await workspaceProfile
+            self.publishStatus = try await publishStatus
             self.agents = try await agents
             self.auditEvents = try await audit
             lastError = nil
@@ -88,8 +91,10 @@ final class OpsStore: ObservableObject {
         do {
             async let kits: [RenderKit] = client.get("review-kits", timeout: 8)
             async let projects: [CampaignProject] = client.get("campaign-projects", timeout: 8)
+            async let publishStatus: PublishStatus = client.get("publish/status", timeout: 8)
             self.reviewKits = try await kits
             self.campaignProjects = try await projects
+            self.publishStatus = try await publishStatus
             lastError = nil
         } catch {
             lastError = error.localizedDescription
@@ -226,6 +231,112 @@ final class OpsStore: ObservableObject {
             let result: DiagnosticsExport = try await client.post("diagnostics/export")
             lastActionMessage = "Diagnostics exported: \(result.path)"
             await refreshAll()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func refreshPublishStatus() async {
+        do {
+            publishStatus = try await client.get("publish/status", timeout: 8)
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func updatePublishSettings(warmupComplete: Bool, mode: String, user: String) async {
+        do {
+            let status: PublishStatus = try await client.post(
+                "publish/settings",
+                body: EncodableBody(
+                    value: [
+                        "warmup_complete": warmupComplete,
+                        "mode": mode,
+                        "user": user
+                    ]
+                )
+            )
+            publishStatus = status
+            lastActionMessage = "Publish settings saved."
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func preparePublishPackage(kit: RenderKit, platforms: [String], title: String = "", caption: String = "") async -> PublishPackage? {
+        do {
+            let package: PublishPackage = try await client.post(
+                "review-kits/\(kit.id)/publish-prep",
+                body: EncodableBody(
+                    value: [
+                        "platforms": platforms,
+                        "title": title,
+                        "caption": caption
+                    ]
+                ),
+                timeout: 20
+            )
+            lastActionMessage = "Publish package prepared."
+            await refreshPublishStatus()
+            return package
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func queuePublishJob(
+        package: PublishPackage,
+        mode: String,
+        platforms: [String],
+        title: String,
+        caption: String,
+        scheduledAt: String = ""
+    ) async -> PublishJob? {
+        do {
+            let job: PublishJob = try await client.post(
+                "publish/jobs",
+                body: EncodableBody(
+                    value: [
+                        "package_id": package.id,
+                        "mode": mode,
+                        "provider": "uploadpost",
+                        "platforms": platforms,
+                        "title": title,
+                        "caption": caption,
+                        "scheduled_at": scheduledAt,
+                        "requested_by": "gui"
+                    ]
+                ),
+                timeout: 20
+            )
+            lastActionMessage = mode == "live" ? "Live publish job is awaiting final confirmation." : "Publish dry run queued."
+            await refreshPublishStatus()
+            return job
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func confirmLivePublish(job: PublishJob) async -> PublishJob? {
+        do {
+            let confirmed: PublishJob = try await client.post("publish/jobs/\(job.id)/confirm-live", timeout: 20)
+            lastActionMessage = "Live publish confirmed and queued for Hermes."
+            await refreshPublishStatus()
+            return confirmed
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func cancelPublishJob(_ job: PublishJob) async {
+        do {
+            let _: PublishJob = try await client.post("publish/jobs/\(job.id)/cancel", timeout: 12)
+            lastActionMessage = "Publish job cancelled."
+            await refreshPublishStatus()
         } catch {
             lastError = error.localizedDescription
         }

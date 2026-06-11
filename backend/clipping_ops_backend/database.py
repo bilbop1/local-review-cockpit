@@ -35,6 +35,7 @@ CAMPAIGN_PROJECT_TARGET = 5
 WATERMARK_REQUIRED_CAMPAIGNS = {"plaqueboymax", "jasontheween"}
 LOCAL_MEDIA_READY_FLAGS = {"local_media_downloaded", "source_media_verified_local", "source_download_verified"}
 DEFAULT_HERMES_PROFILE = "default"
+KEYCHAIN_SERVICE = "com.bilbop.ClippingOpsCockpit"
 HERMES_JOB_ACTIVE_STATUSES = ("queued", "claimed", "running")
 HERMES_JOB_TERMINAL_STATUSES = ("succeeded", "blocked", "failed", "cancelled")
 HERMES_JOB_INTENTS = {
@@ -42,6 +43,10 @@ HERMES_JOB_INTENTS = {
     "refresh_campaign_project": {"name": "Refresh Campaign Brief", "kind": "research", "stage": "queued-for-hermes"},
     "discover_campaign_sources": {"name": "Discover Campaign Sources", "kind": "research", "stage": "queued-for-hermes"},
     "build_campaign_reviews": {"name": "Build Campaign Reviews", "kind": "render", "stage": "queued-for-hermes"},
+    "prepare_publish_package": {"name": "Prepare Publish Package", "kind": "publish", "stage": "queued-for-hermes"},
+    "publish_dry_run": {"name": "Publish Dry Run", "kind": "publish", "stage": "queued-for-hermes"},
+    "publish_live": {"name": "Publish Live", "kind": "publish", "stage": "queued-for-hermes"},
+    "publish_status_sweep": {"name": "Publish Status Sweep", "kind": "publish", "stage": "queued-for-hermes"},
     "platform_smoke": {"name": "Run Platform Check", "kind": "platform", "stage": "queued-for-hermes"},
     "selected_feeder_sweep": {"name": "Check Creators", "kind": "platform", "stage": "queued-for-hermes"},
     "review_risk_sweep": {"name": "Review Risk Sweep", "kind": "review", "stage": "queued-for-hermes"},
@@ -748,6 +753,44 @@ CREATE TABLE IF NOT EXISTS system_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS publish_packages (
+  id TEXT PRIMARY KEY,
+  kit_id TEXT NOT NULL UNIQUE,
+  provider TEXT NOT NULL,
+  platforms_json TEXT NOT NULL,
+  title TEXT NOT NULL,
+  caption TEXT NOT NULL,
+  hashtags_json TEXT NOT NULL,
+  video_path TEXT NOT NULL,
+  status TEXT NOT NULL,
+  checklist_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS publish_jobs (
+  id TEXT PRIMARY KEY,
+  package_id TEXT NOT NULL,
+  kit_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  platforms_json TEXT NOT NULL,
+  title TEXT NOT NULL,
+  caption TEXT NOT NULL,
+  scheduled_at TEXT NOT NULL DEFAULT '',
+  final_confirmed INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  hermes_job_id TEXT NOT NULL DEFAULT '',
+  provider_job_id TEXT NOT NULL DEFAULT '',
+  provider_response_json TEXT NOT NULL DEFAULT '{}',
+  post_urls_json TEXT NOT NULL DEFAULT '{}',
+  error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  posted_at TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -2909,6 +2952,54 @@ def upsert_source_route(payload: Dict[str, Any]) -> Dict[str, Any]:
     return item or {}
 
 
+def _system_setting_value(key: str, default: str = "") -> str:
+    item = one("SELECT value FROM system_settings WHERE key = ?", (key,))
+    return str((item or {}).get("value", default))
+
+
+def _keychain_secret_present(account: str) -> bool:
+    if os.environ.get("CLIPPING_OPS_NO_KEY") == "1":
+        return False
+    if os.environ.get("UPLOAD_POST_API_KEY") or os.environ.get("UPLOADPOST_API_KEY"):
+        return True
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-a", account, "-s", KEYCHAIN_SERVICE, "-w"],
+            text=True,
+            capture_output=True,
+            timeout=1,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def uploadpost_publish_readiness_hint() -> Dict[str, Any]:
+    key_present = _keychain_secret_present("uploadpost.api_key")
+    warmup = _system_setting_value("publish.uploadpost.warmup_complete", "false").strip().lower() in {"1", "true", "yes", "y"} or os.environ.get(
+        "CLIPPING_OPS_UPLOADPOST_WARMUP_COMPLETE", ""
+    ).strip().lower() in {"1", "true", "yes", "y"}
+    mode = _system_setting_value("publish.uploadpost.mode", "dry_run").strip().lower() or "dry_run"
+    if mode not in {"dry_run", "live"}:
+        mode = "dry_run"
+    blockers: List[str] = []
+    if not key_present:
+        blockers.append("Upload-Post API key missing")
+    if not warmup:
+        blockers.append("account warm-up incomplete")
+    if mode != "live":
+        blockers.append("provider mode is dry-run")
+    live_ready = key_present and warmup and mode == "live"
+    return {
+        "live_ready": live_ready,
+        "key_present": key_present,
+        "warmup_complete": warmup,
+        "mode": mode,
+        "blockers": blockers,
+        "detail": f"provider=uploadpost; key={'configured' if key_present else 'missing'}; warmup={warmup}; mode={mode}",
+    }
+
+
 def readiness_report() -> Dict[str, Any]:
     repo_root = Path(__file__).resolve().parents[2]
     gate = latest_campaign_gate()
@@ -3051,6 +3142,7 @@ def readiness_report() -> Dict[str, Any]:
         hermes_blocker = "At least one Hermes-claimed job must succeed before internal readiness is green."
 
     db_ok = database_path().exists()
+    publish = uploadpost_publish_readiness_hint()
     platform_ok = int(twitch_ok["count"]) > 0 and int(kick_ok["count"]) > 0
     gate_ok = gate.get("status") == "qualified"
     production_render_ok = non_demo_green_count > 0
@@ -3194,9 +3286,16 @@ def readiness_report() -> Dict[str, Any]:
             str(product_path),
         ),
         feature(
-            "Human approval only",
+            "Autopost readiness",
+            "green" if publish["live_ready"] else "yellow",
+            publish["detail"],
+            "" if publish["live_ready"] else "; ".join(publish["blockers"]),
+            "/api/publish/status",
+        ),
+        feature(
+            "Human-confirmed publishing gate",
             "green",
-            "Autopublish/payout/account changes are hard-blocked in backend routes.",
+            "Posting is locked behind approved review kit, provider config, completed warm-up, and final GUI confirmation. Payout/account changes remain blocked.",
             "",
             "/api/health",
         ),
@@ -3214,15 +3313,15 @@ def readiness_report() -> Dict[str, Any]:
         "Burned-in subtitle proof",
         "GUI crash/control QA",
         "Security scan",
-        "Human approval only",
+        "Human-confirmed publishing gate",
     ]
-    buddy_required = ["Buddy no-key installer", "Security scan", "Human approval only"]
+    buddy_required = ["Buddy no-key installer", "Security scan", "Human-confirmed publishing gate"]
     codex_handoff_required = [
         "Local backend source of truth",
         "Buddy no-key installer",
         "Codex source handoff package",
         "Security scan",
-        "Human approval only",
+        "Human-confirmed publishing gate",
     ]
     customer_required = [item["name"] for item in features]
 

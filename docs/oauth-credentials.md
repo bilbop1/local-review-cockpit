@@ -38,7 +38,11 @@ kick.scopes
 kick.app_access_token
 kick.app_token_expires_at
 kick.pkce_code_verifier
+
+uploadpost.api_key
 ```
+
+Upload-Post can also be provided for a single runtime with private environment variable `UPLOAD_POST_API_KEY`. Do not commit that value or include it in diagnostics/handoff files.
 
 ## Default Scopes
 
@@ -60,6 +64,8 @@ GET  /api/auth/twitch/authorize-url
 GET  /api/auth/kick/authorize-url
 POST /api/auth/twitch/app-token
 POST /api/auth/kick/app-token
+GET  /api/publish/status
+POST /api/publish/settings
 ```
 
 App tokens are stored back into Keychain. Responses never include token values.

@@ -10,7 +10,7 @@ The backend blocks or refuses work when an action would mutate an external accou
 
 Blocked by default:
 
-- Autonomous social posting
+- Social posting unless the review kit is approved, the Upload-Post/provider key is configured outside the repo, account warm-up is complete, live mode is enabled, and the GUI final confirmation is given
 - Payout submission
 - Account connection
 - Account rebrand
@@ -24,7 +24,8 @@ Allowed locally:
 - Health checks
 - Demo renders from local media
 - Demo review-kit approval as `demo_reviewed`
-- Manual publishing prep only for non-demo kits after campaign gate qualification
+- Manual publishing prep and Upload-Post dry-run validation only for approved non-demo kits after campaign gate qualification
+- Confirmation-gated Upload-Post live jobs after account warm-up and provider readiness
 - Rejection with notes
 - Audit logging
 
@@ -37,3 +38,6 @@ Allowed locally:
 - `ffprobe` JSON proving H.264/AAC 1080x1920 output.
 - Campaign evidence screenshots and extracted text before any real campaign render.
 - Secret scan proving no API keys, tokens, browser sessions, or Keychain items are exported.
+- Publish status proof from `/api/publish/status` showing dry-run/live provider readiness without exposing API keys.
+
+AI agents must also follow `docs/AI_AGENT_OPERATING_CONTRACT.md`. If a model is unsure whether an action is allowed, the action is blocked until the operator explicitly approves it.

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HERMES_PROFILE="${HERMES_PROFILE:-default}"
 
 if ! command -v hermes >/dev/null 2>&1; then
   echo "Hermes is not on PATH." >&2
@@ -18,7 +19,7 @@ create_job() {
   fi
   local prompt
   prompt="$(<"$prompt_file")"
-  hermes cron create "$schedule" "$prompt" --name "$name" --deliver local --workdir "$ROOT_DIR"
+  hermes cron create "$schedule" "$prompt" --name "$name" --deliver local --workdir "$ROOT_DIR" --profile "$HERMES_PROFILE"
 }
 
 create_no_agent_job() {
@@ -30,7 +31,7 @@ create_no_agent_job() {
     echo "✓ $name already exists"
     return
   fi
-  hermes cron create "$schedule" "$prompt" --name "$name" --deliver local --workdir "$ROOT_DIR" --script "$script_path" --no-agent --profile default
+  hermes cron create "$schedule" "$prompt" --name "$name" --deliver local --workdir "$ROOT_DIR" --script "$script_path" --no-agent --profile "$HERMES_PROFILE"
 }
 
 mkdir -p "$HOME/.hermes/scripts"
@@ -46,6 +47,6 @@ chmod 700 "$DISPATCHER_SCRIPT"
 create_job "clip-ops daily brief" "every 24h" "$ROOT_DIR/hermes/clip-ops.prompt.md"
 create_job "clip-research campaign gate sweep" "every 12h" "$ROOT_DIR/hermes/clip-research.prompt.md"
 create_job "clip-review kit risk sweep" "every 6h" "$ROOT_DIR/hermes/clip-review.prompt.md"
-create_no_agent_job "clip-ops job dispatcher" "every 10m" "$(basename "$DISPATCHER_SCRIPT")" "Claim and execute queued Clipping Ops Cockpit jobs. Deterministic worker only; do not publish or mutate accounts."
+create_no_agent_job "clip-ops job dispatcher" "every 10m" "$(basename "$DISPATCHER_SCRIPT")" "Claim and execute queued Clipping Ops Cockpit jobs. Deterministic worker only; live posting requires backend approval/provider/warm-up/final-confirmation gates and never mutates accounts."
 
-echo "Hermes Clipping Ops jobs installed or already present."
+echo "Hermes Clipping Ops jobs installed or already present with profile: $HERMES_PROFILE"

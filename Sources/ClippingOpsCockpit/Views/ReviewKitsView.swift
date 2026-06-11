@@ -138,6 +138,7 @@ struct ReviewKitsView: View {
                     detailHeader(kit)
                     videoPanel(kit: kit)
                     decisionPanel(kit: kit)
+                    PublishPanel(store: store, kit: kit)
                     clipDetailsPanel(kit: kit)
                     technicalArtifactsPanel(kit: kit)
                 }
@@ -481,6 +482,263 @@ private struct ReviewKitRow: View {
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 6)
+    }
+}
+
+private struct PublishPanel: View {
+    @ObservedObject var store: OpsStore
+    var kit: RenderKit
+
+    @State private var selectedPlatforms: Set<String> = ["tiktok", "instagram", "youtube"]
+    @State private var package: PublishPackage?
+    @State private var latestJob: PublishJob?
+    @State private var publishTitle = ""
+    @State private var publishCaption = ""
+    @State private var scheduleEnabled = false
+    @State private var scheduledDate = Date().addingTimeInterval(60 * 60)
+    @State private var showingPostConfirmation = false
+    @State private var showingScheduleConfirmation = false
+
+    private var approvedForPrep: Bool {
+        kit.reviewStatus == "approved_manual_prep"
+    }
+
+    private var provider: PublishProviderState? {
+        store.publishStatus?.provider
+    }
+
+    private var liveReady: Bool {
+        provider?.liveReady ?? false
+    }
+
+    private var sortedPlatforms: [String] {
+        (store.publishStatus?.supportedPlatforms.isEmpty == false ? store.publishStatus?.supportedPlatforms : ["tiktok", "instagram", "youtube"]) ?? ["tiktok", "instagram", "youtube"]
+    }
+
+    private var platformList: [String] {
+        sortedPlatforms.filter { selectedPlatforms.contains($0) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Publish")
+                    .font(.headline)
+                Spacer()
+                StatusPill(text: liveReady ? "live ready" : "dry-run locked")
+            }
+
+            if !approvedForPrep {
+                Label("Approve this review before preparing posts.", systemImage: "lock.fill")
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("publish-locked-message")
+            } else {
+                publishControls
+                if let latestJob {
+                    publishJobStatus(latestJob)
+                } else if let provider, !provider.blockers.isEmpty {
+                    Text(provider.blockers.joined(separator: " "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .padding(16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .task {
+            await store.refreshPublishStatus()
+        }
+        .onChange(of: kit.id) { _, _ in
+            package = nil
+            latestJob = nil
+            publishTitle = ""
+            publishCaption = ""
+            selectedPlatforms = Set(store.publishStatus?.defaultPlatforms ?? ["tiktok", "instagram", "youtube"])
+        }
+        .confirmationDialog("Post this approved kit now?", isPresented: $showingPostConfirmation) {
+            Button("Confirm Live Post", role: .destructive) {
+                Task { await queueAndConfirmLive(scheduledAt: "") }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will queue a live Upload-Post job through Hermes. It does not touch payouts or account settings.")
+        }
+        .confirmationDialog("Schedule this approved kit?", isPresented: $showingScheduleConfirmation) {
+            Button("Confirm Schedule", role: .destructive) {
+                Task { await queueAndConfirmLive(scheduledAt: isoString(scheduledDate)) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This queues a confirmed live job with the selected schedule time.")
+        }
+        .accessibilityIdentifier("review-kit-publish-panel")
+    }
+
+    private var publishControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                ForEach(sortedPlatforms, id: \.self) { platform in
+                    Toggle(platform.uppercased(), isOn: Binding(
+                        get: { selectedPlatforms.contains(platform) },
+                        set: { enabled in
+                            if enabled {
+                                selectedPlatforms.insert(platform)
+                            } else {
+                                selectedPlatforms.remove(platform)
+                            }
+                        }
+                    ))
+                    .toggleStyle(.button)
+                    .controlSize(.small)
+                    .accessibilityIdentifier("publish-platform-\(platform)")
+                }
+                Spacer()
+            }
+
+            TextField("Post title", text: $publishTitle)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("publish-title")
+
+            TextField("Caption", text: $publishCaption, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(2...5)
+                .accessibilityIdentifier("publish-caption")
+
+            HStack(spacing: 10) {
+                Toggle("Schedule", isOn: $scheduleEnabled)
+                    .accessibilityIdentifier("publish-schedule-toggle")
+                DatePicker("", selection: $scheduledDate, displayedComponents: [.date, .hourAndMinute])
+                    .labelsHidden()
+                    .disabled(!scheduleEnabled)
+                    .accessibilityIdentifier("publish-schedule-date")
+                Spacer()
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    Task { await preparePackage() }
+                } label: {
+                    Label("Prepare Post", systemImage: "shippingbox")
+                }
+                .disabled(platformList.isEmpty)
+                .accessibilityIdentifier("publish-prepare")
+
+                Button {
+                    Task { await dryRun() }
+                } label: {
+                    Label("Dry Run", systemImage: "checkmark.shield")
+                }
+                .disabled(platformList.isEmpty)
+                .accessibilityIdentifier("publish-dry-run")
+
+                Button {
+                    showingScheduleConfirmation = true
+                } label: {
+                    Label("Schedule", systemImage: "calendar.badge.clock")
+                }
+                .disabled(!liveReady || platformList.isEmpty || !scheduleEnabled)
+                .accessibilityIdentifier("publish-schedule")
+
+                Button(role: .destructive) {
+                    showingPostConfirmation = true
+                } label: {
+                    Label("Post Now", systemImage: "paperplane.fill")
+                }
+                .disabled(!liveReady || platformList.isEmpty)
+                .accessibilityIdentifier("publish-post-now")
+            }
+
+            if let provider {
+                HStack(spacing: 10) {
+                    Label(provider.apiKey == "configured" ? "Key configured" : "Key missing", systemImage: provider.apiKey == "configured" ? "key.fill" : "key.slash")
+                    Label(provider.warmupComplete ? "Warm-up done" : "Warm-up pending", systemImage: provider.warmupComplete ? "flame.fill" : "hourglass")
+                    Label(provider.mode == "live" ? "Live mode" : "Dry-run mode", systemImage: provider.mode == "live" ? "bolt.fill" : "testtube.2")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func publishJobStatus(_ job: PublishJob) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                StatusPill(text: job.status)
+                Text(job.mode == "live" ? "Upload-Post live" : "Upload-Post dry run")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if !job.error.isEmpty {
+                Text(job.error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+            if !job.postUrls.isEmpty {
+                ForEach(job.postUrls.keys.sorted(), id: \.self) { key in
+                    if let value = job.postUrls[key], let url = URL(string: value) {
+                        Link("\(key): \(value)", destination: url)
+                            .font(.caption)
+                    }
+                }
+            }
+        }
+        .accessibilityIdentifier("publish-latest-job")
+    }
+
+    @MainActor
+    private func preparePackage() async {
+        guard !platformList.isEmpty else { return }
+        if let prepared = await store.preparePublishPackage(
+            kit: kit,
+            platforms: platformList,
+            title: publishTitle,
+            caption: publishCaption
+        ) {
+            package = prepared
+            publishTitle = prepared.title
+            publishCaption = prepared.caption
+        }
+    }
+
+    @MainActor
+    private func preparedPackage() async -> PublishPackage? {
+        if let package { return package }
+        await preparePackage()
+        return package
+    }
+
+    @MainActor
+    private func dryRun() async {
+        guard let package = await preparedPackage() else { return }
+        latestJob = await store.queuePublishJob(
+            package: package,
+            mode: "dry_run",
+            platforms: platformList,
+            title: publishTitle,
+            caption: publishCaption
+        )
+    }
+
+    @MainActor
+    private func queueAndConfirmLive(scheduledAt: String) async {
+        guard let package = await preparedPackage() else { return }
+        guard let job = await store.queuePublishJob(
+            package: package,
+            mode: "live",
+            platforms: platformList,
+            title: publishTitle,
+            caption: publishCaption,
+            scheduledAt: scheduledAt
+        ) else {
+            return
+        }
+        latestJob = await store.confirmLivePublish(job: job) ?? job
+    }
+
+    private func isoString(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
     }
 }
 

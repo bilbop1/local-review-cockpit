@@ -14,6 +14,21 @@ $value
 " >/dev/null
 }
 
+store_optional_prompt() {
+  local account="$1"
+  local label="$2"
+  local value
+  read -rsp "$label (leave blank to skip): " value
+  printf '\n'
+  if [[ -z "$value" ]]; then
+    echo "Skipped $account"
+    return
+  fi
+  security add-generic-password -U -a "$account" -s "$SERVICE" -w <<<"$value
+$value
+" >/dev/null
+}
+
 store_literal() {
   local account="$1"
   local value="$2"
@@ -32,5 +47,7 @@ store_prompt "kick.client_id" "Kick client ID"
 store_prompt "kick.client_secret" "Kick client secret"
 store_literal "kick.redirect_uri" "http://localhost:8765/auth/kick/callback"
 store_literal "kick.scopes" "user:read channel:read"
+
+store_optional_prompt "uploadpost.api_key" "Upload-Post API key"
 
 echo "Stored credentials and default redirect URIs. Secrets were not written to repo files."

@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 from . import database as db
 from . import credentials
 from . import platforms
+from . import publishing
 from .renderer import create_demo_kits, create_selected_feeder_kits, validate_video
 
 
@@ -27,7 +28,9 @@ PORT = 8765
 API_VERSION = "2026-06-03-streamer-campaigns-01"
 DIAGNOSTIC_SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
+    re.compile(r"Apikey\s+(?!<redacted>|configured|missing)[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
     re.compile(r"(access_token|refresh_token|client_secret|discord_token)\s*[:=]\s*[\"'][^\"']{8,}[\"']", re.IGNORECASE),
+    re.compile(r"(upload[_-]?post[_-]?api[_-]?key|uploadpost_api_key|api_key)\s*[:=]\s*[\"'][^\"']{8,}[\"']", re.IGNORECASE),
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |PRIVATE )?PRIVATE KEY-----", re.IGNORECASE),
 ]
 
@@ -224,6 +227,7 @@ def health() -> Dict[str, Any]:
     campaign_status = "ready" if gate.get("status") == "qualified" else "blocked"
     readiness = db.readiness_report()
     production_green = readiness.get("overall") == "green"
+    publish = publishing.publish_status()
     return {
         "api_version": API_VERSION,
         "status": local_demo_status,
@@ -238,8 +242,9 @@ def health() -> Dict[str, Any]:
         "blockers": blockers,
         "discord": discord_state(),
         "auth": auth_status,
+        "publish": publish,
         "safety": {
-            "autopublish": "blocked",
+            "autopublish": "locked_until_approved_confirmed",
             "payout_submission": "blocked",
             "account_connection": "blocked",
             "account_rebrand": "blocked",
@@ -336,12 +341,15 @@ def export_diagnostics() -> Dict[str, Any]:
         "campaign_evidence.json": db.rows("SELECT * FROM campaign_evidence ORDER BY captured_at DESC"),
         "source_routes.json": db.rows("SELECT * FROM source_routes ORDER BY updated_at DESC"),
         "review_kits.json": db.rows("SELECT * FROM render_kits ORDER BY created_at DESC"),
+        "publish_status.json": publishing.publish_status(),
+        "publish_jobs.json": publishing.visible_publish_jobs(100),
         "workspace_profile.json": workspace_profile(),
         "security_notice.json": {
             "secrets_included": False,
             "keychain_items_included": False,
             "browser_sessions_included": False,
             "discord_tokens_included": False,
+            "uploadpost_api_key_included": False,
             "note": "Diagnostics export includes operational state and artifact paths only.",
         },
     }
@@ -418,22 +426,22 @@ def list_agents() -> Dict[str, Any]:
                 "name": "clip-ops",
                 "role": "Orchestrator, schedule owner, daily brief, Discord coordination",
                 "status": profile_status,
-                "can_write": "jobs, summaries, schedule records, safe task routing",
-                "cannot_do": "publish, connect accounts, submit payouts, rebrand, clear gambling promo gates",
+                "can_write": "jobs, summaries, schedule records, publish dry-runs, safe task routing",
+                "cannot_do": "approve kits, confirm live posts, connect accounts, submit payouts, rebrand, clear gambling promo gates",
             },
             {
                 "name": "clip-research",
                 "role": "Campaign and clip discovery",
                 "status": profile_status,
                 "can_write": "campaign candidates, clip candidates, source notes, score evidence",
-                "cannot_do": "final approvals, platform posting, unsafe scraping without labels",
+                "cannot_do": "final approvals, live-post confirmation, unsafe scraping without labels",
             },
             {
                 "name": "clip-review",
                 "role": "Risk/readiness/revision reviewer",
                 "status": profile_status,
                 "can_write": "risk flags, review comments, revision prompts, approval recommendations",
-                "cannot_do": "legal determinations, direct publishing, final risky-action approval",
+                "cannot_do": "legal determinations, live-post confirmation, final risky-action approval",
             },
         ],
         "schedules": [
@@ -1007,6 +1015,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(distribution_state())
             elif path == "/api/auth/status":
                 self.send_json(credentials.all_status())
+            elif path == "/api/publish/status":
+                self.send_json(publishing.publish_status())
             elif path == "/api/auth/twitch/authorize-url":
                 self.send_json(credentials.authorization_url("twitch"))
             elif path == "/api/auth/kick/authorize-url":
@@ -1116,6 +1126,36 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/hermes/profile":
                 body = self.read_body()
                 self.send_json({"status": "succeeded", "profile": db.set_hermes_profile(str(body.get("profile", "")))})
+            elif path == "/api/publish/settings":
+                try:
+                    self.send_json(publishing.set_publish_settings(self.read_body()))
+                except publishing.PublishError as exc:
+                    self.send_json({"error": exc.code, "detail": exc.detail}, HTTPStatus.CONFLICT)
+            elif path == "/api/publish/jobs":
+                try:
+                    self.send_json(publishing.create_publish_job(self.read_body()), HTTPStatus.OK)
+                except publishing.PublishError as exc:
+                    status = HTTPStatus.NOT_FOUND if exc.status == "missing" else HTTPStatus.CONFLICT
+                    self.send_json({"error": exc.code, "detail": exc.detail}, status)
+            elif path.startswith("/api/publish/jobs/"):
+                parts = [part for part in path.split("/") if part]
+                if len(parts) != 5:
+                    self.send_json({"error": "not_found", "path": path}, HTTPStatus.NOT_FOUND)
+                    return
+                job_id = parts[3]
+                action = parts[4]
+                try:
+                    if action == "confirm-live":
+                        result = publishing.confirm_live_publish(job_id)
+                    elif action == "cancel":
+                        result = publishing.cancel_publish_job(job_id, actor="user")
+                    else:
+                        self.send_json({"error": "not_found", "path": path}, HTTPStatus.NOT_FOUND)
+                        return
+                    self.send_json(result)
+                except publishing.PublishError as exc:
+                    status = HTTPStatus.NOT_FOUND if exc.status == "missing" else HTTPStatus.CONFLICT
+                    self.send_json({"error": exc.code, "detail": exc.detail}, status)
             elif path == "/api/demo/render":
                 body = self.read_body()
                 limit = int(body.get("limit", 1) or 1)
@@ -1180,6 +1220,20 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/system/prune-irrelevant-review-surface":
                 result = db.prune_irrelevant_review_surface()
                 self.send_json(result)
+            elif path.startswith("/api/review-kits/") and path.endswith("/publish-prep"):
+                kit_id = path.split("/")[3]
+                body = self.read_body()
+                try:
+                    package = publishing.create_publish_package(
+                        kit_id,
+                        platforms=body.get("platforms") if isinstance(body.get("platforms"), list) else publishing.SUPPORTED_PLATFORMS,
+                        title=str(body.get("title", "")),
+                        caption=str(body.get("caption", "")),
+                    )
+                    self.send_json(package)
+                except publishing.PublishError as exc:
+                    status = HTTPStatus.NOT_FOUND if exc.status == "missing" else HTTPStatus.CONFLICT
+                    self.send_json({"error": exc.code, "detail": exc.detail}, status)
             elif path.startswith("/api/review-kits/") and path.endswith("/approve"):
                 kit_id = path.split("/")[3]
                 kit = db.one("SELECT * FROM render_kits WHERE id = ?", (kit_id,))

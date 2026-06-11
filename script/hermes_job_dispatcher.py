@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from clipping_ops_backend import database as db  # noqa: E402
 from clipping_ops_backend import platforms  # noqa: E402
+from clipping_ops_backend import publishing  # noqa: E402
 from clipping_ops_backend import server  # noqa: E402
 
 
@@ -131,6 +132,8 @@ def execute_job(job: Dict[str, Any]) -> Dict[str, Any]:
         return platforms.selected_feeder_sweep()
     if intent == "review_risk_sweep":
         return review_risk_sweep()
+    if intent in {"prepare_publish_package", "publish_dry_run", "publish_live", "publish_status_sweep"}:
+        return publishing.execute_hermes_publish_intent(intent, payload)
     return {"status": "blocked", "blocker": f"Unsupported Hermes job intent: {intent}"}
 
 

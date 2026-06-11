@@ -404,6 +404,120 @@ struct DiagnosticsExport: Codable {
     var files: [String]
 }
 
+struct PublishStatus: Codable {
+    var status: String
+    var supportedPlatforms: [String]
+    var defaultPlatforms: [String]
+    var provider: PublishProviderState
+    var latestJobs: [PublishJob]
+    var notes: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case supportedPlatforms = "supported_platforms"
+        case defaultPlatforms = "default_platforms"
+        case provider
+        case latestJobs = "latest_jobs"
+        case notes
+    }
+}
+
+struct PublishProviderState: Codable {
+    var name: String
+    var mode: String
+    var baseURL: String
+    var apiKey: String
+    var warmupComplete: Bool
+    var user: String
+    var liveReady: Bool
+    var blockers: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case mode
+        case baseURL = "base_url"
+        case apiKey = "api_key"
+        case warmupComplete = "warmup_complete"
+        case user
+        case liveReady = "live_ready"
+        case blockers
+    }
+}
+
+struct PublishPackage: Codable, Identifiable {
+    var id: String
+    var kitID: String
+    var provider: String
+    var platforms: [String]
+    var title: String
+    var caption: String
+    var hashtags: [String]
+    var videoPath: String
+    var status: String
+    var checklist: [String]
+    var createdAt: String
+    var updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case kitID = "kit_id"
+        case provider
+        case platforms
+        case title
+        case caption
+        case hashtags
+        case videoPath = "video_path"
+        case status
+        case checklist
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct PublishJob: Codable, Identifiable {
+    var id: String
+    var packageID: String
+    var kitID: String
+    var provider: String
+    var mode: String
+    var platforms: [String]
+    var title: String
+    var caption: String
+    var scheduledAt: String
+    var finalConfirmed: Bool
+    var status: String
+    var stage: String
+    var hermesJobID: String
+    var providerJobID: String
+    var postUrls: [String: String]
+    var error: String
+    var createdAt: String
+    var updatedAt: String
+    var postedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case packageID = "package_id"
+        case kitID = "kit_id"
+        case provider
+        case mode
+        case platforms
+        case title
+        case caption
+        case scheduledAt = "scheduled_at"
+        case finalConfirmed = "final_confirmed"
+        case status
+        case stage
+        case hermesJobID = "hermes_job_id"
+        case providerJobID = "provider_job_id"
+        case postUrls = "post_urls"
+        case error
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case postedAt = "posted_at"
+    }
+}
+
 struct ClipCandidate: Codable, Identifiable {
     var id: String
     var campaignSlug: String?

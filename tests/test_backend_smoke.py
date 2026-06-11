@@ -24,6 +24,7 @@ from clipping_ops_backend.caption_style import (
     timed_caption_groups,
 )
 from clipping_ops_backend import database as db
+from clipping_ops_backend import publishing
 from clipping_ops_backend.server import clean_reset, export_diagnostics, health, summary, validate_kit_artifacts, workspace_profile
 from clipping_ops_backend.credentials import all_status
 
@@ -79,12 +80,138 @@ class BackendSmokeTests(unittest.TestCase):
 
     def test_health_has_safety_gates(self):
         payload = health()
-        self.assertEqual(payload["safety"]["autopublish"], "blocked")
+        self.assertEqual(payload["safety"]["autopublish"], "locked_until_approved_confirmed")
         self.assertEqual(payload["safety"]["payout_submission"], "blocked")
         self.assertEqual(payload["safety"]["account_connection"], "blocked")
         self.assertEqual(payload["safety"]["account_rebrand"], "blocked")
         self.assertFalse(payload["production_green"])
         self.assertIn("ffmpeg", payload["checks"])
+        self.assertIn("publish", payload)
+
+    def make_publishable_kit(self, *, approved=True, is_demo=False) -> str:
+        suffix = db.new_id("pubtest")
+        clip_identifier = f"clip_publish_ready_{suffix}"
+        media = Path(self._tmp.name) / "source_media" / f"{suffix}.mp4"
+        media.parent.mkdir(parents=True, exist_ok=True)
+        media.write_bytes(b"source proof")
+        clip_id = db.upsert_clip_candidate(
+            {
+                "id": clip_identifier,
+                "campaign_slug": "yourrage",
+                "source_platform": "twitch",
+                "source_url": f"https://www.twitch.tv/yourragegaming/clip/{suffix}",
+                "title": "YourRAGE publish ready",
+                "duration": 21.0,
+                "view_count": 2500,
+                "local_media_path": str(media),
+                "provenance": "official_api_metadata",
+                "risk_flags": ["campaign_project_yourrage", "source_media_verified_local", "selected_feeder_yourragegaming"],
+            }
+        )
+        nomination_id = db.create_nomination(
+            clip_id,
+            "YourRAGE publish ready",
+            "Approved review kit for publish dry-run tests.",
+            target_style=db.CAMPAIGN_SHORT_PROFILE,
+            status="rendered_non_demo",
+            campaign_slug="yourrage",
+        )
+        kit_dir = Path(self._tmp.name) / "render_kits" / f"publish-ready-{suffix}-{'demo' if is_demo else 'campaign'}"
+        kit_dir.mkdir(parents=True, exist_ok=True)
+        for name, text in {
+            "caption.txt": "Hook card: YourRAGE had chat crying\nSuggested post caption: YourRAGE had chat crying 😂 #yourrage\n",
+            "transcript.txt": "YourRAGE had chat crying.\nWord timings:\n- 0.00-0.30: YourRAGE\n",
+            "checklist.md": "- [x] Stored source URL exists for the clip candidate.\n",
+            "source.md": f"- Source URL: https://www.twitch.tv/yourragegaming/clip/{suffix}\n- Source verification: `source_media_verified_local`\n- Local media: `{media}`\n",
+            "risk.md": "- Publishing requires final confirmation.\n",
+            "style_critique.md": "Status: green\nProfile: campaign_short_final_v1\n",
+            "render_text_manifest.json": json.dumps(
+                {
+                    "profile": "campaign_short_final_v1",
+                    "rendered_text": {
+                        "hook_card": "YourRAGE had chat crying",
+                        "caption_beats": ["CHAT LOST", "IT"],
+                    },
+                }
+            ),
+            "ffprobe.json": json.dumps(
+                {
+                    "streams": [
+                        {"codec_type": "video", "codec_name": "h264", "width": 1080, "height": 1920},
+                        {"codec_type": "audio", "codec_name": "aac"},
+                    ]
+                }
+            ),
+        }.items():
+            (kit_dir / name).write_text(text, encoding="utf-8")
+        for name in ("thumbnail.jpg", "contact_sheet.jpg"):
+            (kit_dir / name).write_bytes(b"artifact")
+        write_valid_review_video(kit_dir / "review.mp4")
+        kit_id = db.create_render_kit(
+            nomination_id,
+            "YourRAGE publish ready",
+            kit_dir / "review.mp4",
+            kit_dir / "caption.txt",
+            kit_dir / "transcript.txt",
+            kit_dir / "checklist.md",
+            kit_dir / "source.md",
+            kit_dir / "risk.md",
+            is_demo=is_demo,
+            campaign_slug="yourrage",
+        )
+        if approved:
+            db.execute("UPDATE render_kits SET review_status='approved_manual_prep', approved_by='user', approved_at=? WHERE id=?", (db.utc_now(), kit_id))
+        return kit_id
+
+    def test_publish_dry_run_prepares_and_validates_approved_kit(self):
+        kit_id = self.make_publishable_kit()
+        package = publishing.create_publish_package(kit_id, platforms=["tiktok", "instagram", "youtube"])
+        self.assertEqual(package["status"], "ready")
+        self.assertEqual(package["platforms"], ["tiktok", "instagram", "youtube"])
+        self.assertIn("#yourrage", package["hashtags"])
+        job = publishing.create_publish_job({"package_id": package["id"], "mode": "dry_run", "platforms": ["tiktok", "youtube"]})
+        result = publishing.execute_publish_job(job["id"])
+        self.assertEqual(result["status"], "succeeded")
+        updated = publishing.get_publish_job(job["id"])
+        self.assertEqual(updated["status"], "dry_run_succeeded")
+        self.assertEqual(updated["platforms"], ["tiktok", "youtube"])
+        self.assertIn("Apikey <redacted>", json.dumps(updated["provider_response"]))
+
+    def test_publish_blocks_unapproved_demo_and_invalid_platforms(self):
+        unapproved_id = self.make_publishable_kit(approved=False)
+        with self.assertRaises(publishing.PublishError) as unapproved:
+            publishing.create_publish_package(unapproved_id)
+        self.assertIn("approved", unapproved.exception.detail.lower())
+
+        demo_id = self.make_publishable_kit(approved=True, is_demo=True)
+        with self.assertRaises(publishing.PublishError) as demo:
+            publishing.create_publish_package(demo_id)
+        self.assertIn("demo", demo.exception.detail.lower())
+
+        approved_id = self.make_publishable_kit(approved=True)
+        with self.assertRaises(publishing.PublishError):
+            publishing.create_publish_package(approved_id, platforms=["tiktok", "myspace"])
+
+    def test_live_publish_requires_key_warmup_and_confirmation(self):
+        kit_id = self.make_publishable_kit()
+        package = publishing.create_publish_package(kit_id)
+        job = publishing.create_publish_job({"package_id": package["id"], "mode": "live", "platforms": ["tiktok"]})
+        self.assertEqual(job["status"], "awaiting_confirmation")
+        with self.assertRaises(publishing.PublishError) as blocked:
+            publishing.confirm_live_publish(job["id"])
+        self.assertIn("Upload-Post API key missing", blocked.exception.detail)
+
+        result = publishing.execute_publish_job(job["id"])
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("Final live-post confirmation is missing", result["blocker"])
+
+    def test_publish_readiness_is_yellow_until_uploadpost_key_and_warmup(self):
+        status = publishing.publish_status()
+        self.assertEqual(status["status"], "yellow")
+        self.assertFalse(status["provider"]["live_ready"])
+        readiness = db.readiness_report()
+        autopost = next(item for item in readiness["features"] if item["name"] == "Autopost readiness")
+        self.assertEqual(autopost["status"], "yellow")
 
     def test_caption_style_uses_tiktok_sans_and_two_word_beats(self):
         manifest = caption_style_manifest()
@@ -631,7 +758,8 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertIn("kick", payload["providers"])
         self.assertIn("required_redirects", payload)
         raw = json.dumps(payload).lower()
-        self.assertNotIn("client_secret", raw.replace('"client_secret": "configured"', ""))
+        for provider in payload["providers"].values():
+            self.assertIn(provider["client_secret"], {"configured", "missing"})
         self.assertNotIn("access_token", raw)
 
     def test_no_key_mode_blocks_credential_reads_and_refresh(self):

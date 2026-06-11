@@ -25,7 +25,8 @@ health = get("/api/health")
 assert health["checks"]["database"]["ok"], health
 assert health["checks"]["ffmpeg"]["ok"], health
 assert health["checks"]["ffprobe"]["ok"], health
-assert health["safety"]["autopublish"] == "blocked", health
+assert health["safety"]["autopublish"] == "locked_until_approved_confirmed", health
+assert health["publish"]["provider"]["mode"] in {"dry_run", "live"}, health
 
 req = urllib.request.Request(
     f"http://{host}:{port}/api/demo/render",

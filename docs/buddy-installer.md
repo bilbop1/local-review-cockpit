@@ -2,6 +2,12 @@
 
 You are an incoming Codex/Hermes-backed session setting this repo up on a new operator's machine. The main operating manual lives in `docs/CODEX_HANDOFF_BOOK.md`. Treat that book as the source of truth for campaign choice, caption rules, Hermes setup, and readiness gates.
 
+If you are an AI agent, start with `AGENT_START_HERE.md` and run:
+
+```bash
+./script/verify_incoming_clone.sh
+```
+
 Use `script/setup_buddy_no_key.sh` to install and verify the same local system shape without transferring secrets.
 
 Clone the public GitHub source repo and build locally:
@@ -19,6 +25,7 @@ The installer checks for Swift, `uv`, Python, `ffmpeg`, `ffprobe`, and Hermes, t
 It intentionally does not copy:
 
 - API keys
+- Upload-Post keys or connected social account sessions
 - Hermes auth files
 - Discord tokens or webhook URLs
 - `.env` files
@@ -28,7 +35,7 @@ It intentionally does not copy:
 - downloaded source media
 - rendered review kits
 
-Real campaign ingestion remains blocked until the local operator signs into their own services and provides their own credentials. The demo review-kit path works from local/sample media only.
+Real campaign ingestion remains blocked until the local operator signs into their own services and provides their own credentials. Upload-Post live posting remains locked until the local operator provides their own key, completes account warm-up, switches live mode on, and confirms each post. The demo review-kit path works from local/sample media only.
 
 Normal app actions queue Hermes job intents. The local operator must configure their own Hermes profile/provider locally; this repo never transfers Hermes auth, model provider auth, Discord gateway credentials, or API keys.
 
@@ -36,7 +43,7 @@ The source repo includes the caption standard and vendored TikTok Sans font file
 
 The current campaign standard is streamer-first: YourRAGE, PlaqueBoyMax, and JasonTheWeen are active; Haste stays excluded unless a real linked source pack appears; Lacy stays demoted unless a clip actually matches the arrested/missing-in-action brief.
 
-No-key mode must show Twitch and Kick credentials as missing. That is success, not failure.
+No-key mode must show Twitch, Kick, and Upload-Post credentials as missing. That is success, not failure.
 
 ## Command
 

@@ -72,6 +72,8 @@ with urllib.request.urlopen(f"http://{host}:{port}/api/health", timeout=10) as r
 assert health["auth"]["no_key_mode"] is True, health["auth"]
 assert health["auth"]["providers"]["twitch"]["ok"] is False, health["auth"]
 assert health["auth"]["providers"]["kick"]["ok"] is False, health["auth"]
+assert health["publish"]["provider"]["api_key"] == "missing", health["publish"]
+assert health["publish"]["provider"]["live_ready"] is False, health["publish"]
 assert health["production_green"] is False, health
 print("no-key credential isolation ok")
 PY
@@ -99,6 +101,8 @@ payload = {
     "ok": health["auth"]["no_key_mode"] is True
     and health["auth"]["providers"]["twitch"]["ok"] is False
     and health["auth"]["providers"]["kick"]["ok"] is False
+    and health["publish"]["provider"]["api_key"] == "missing"
+    and health["publish"]["provider"]["live_ready"] is False
     and health["production_green"] is False,
     "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     "clipping_ops_home": home,
@@ -108,6 +112,8 @@ payload = {
     "api_version": health["api_version"],
     "twitch_ok": health["auth"]["providers"]["twitch"]["ok"],
     "kick_ok": health["auth"]["providers"]["kick"]["ok"],
+    "uploadpost_api_key": health["publish"]["provider"]["api_key"],
+    "uploadpost_live_ready": health["publish"]["provider"]["live_ready"],
     "production_green": health["production_green"],
     "readiness_overall": readiness["overall"],
     "hermes_available": agents["hermes_available"],
@@ -122,5 +128,5 @@ raise SystemExit(0 if payload["ok"] else 1)
 PY
 
 echo
-echo "No-key setup complete. This script does not copy API keys, Hermes auth, Discord tokens, .env files, or Keychain items."
+echo "No-key setup complete. This script does not copy API keys, Upload-Post keys, Hermes auth, Discord tokens, .env files, or Keychain items."
 echo "Run: ./script/build_and_run.sh"

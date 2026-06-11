@@ -2,6 +2,9 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var store: OpsStore
+    @State private var publishWarmupComplete = false
+    @State private var publishMode = "dry_run"
+    @State private var uploadPostUser = "local-operator"
 
     var body: some View {
         ScrollView {
@@ -11,6 +14,7 @@ struct SettingsView: View {
                 if let health = store.health {
                     workspacePanel
                     healthPanel(health)
+                    publishPanel
                     discordPanel(health.discord)
                     installerPanel(health)
                 } else {
@@ -24,6 +28,10 @@ struct SettingsView: View {
             if store.health == nil {
                 await store.refreshAll()
             }
+            syncPublishSettings()
+        }
+        .onChange(of: store.publishStatus?.provider.mode) { _, _ in
+            syncPublishSettings()
         }
     }
 
@@ -123,6 +131,82 @@ struct SettingsView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
     }
 
+    private var publishPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Upload-Post Publishing")
+                    .font(.headline)
+                Spacer()
+                StatusPill(text: store.publishStatus?.provider.liveReady == true ? "live ready" : "dry-run locked")
+            }
+
+            Text("Live posting stays locked until the API key is installed outside the repo, account warm-up is complete, live mode is selected, and each post is confirmed from Review Kits.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
+            if let provider = store.publishStatus?.provider {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
+                    InfoRow(label: "Provider", value: provider.name)
+                    InfoRow(label: "API key", value: provider.apiKey)
+                    InfoRow(label: "Mode", value: provider.mode == "live" ? "Live" : "Dry Run")
+                    InfoRow(label: "Warm-up", value: provider.warmupComplete ? "Complete" : "Pending")
+                    InfoRow(label: "Upload user", value: provider.user)
+                    InfoRow(label: "Base URL", value: provider.baseURL)
+                }
+
+                if !provider.blockers.isEmpty {
+                    Text(provider.blockers.joined(separator: " "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+
+            Divider()
+
+            Toggle("Account warm-up complete", isOn: $publishWarmupComplete)
+                .accessibilityIdentifier("settings-publish-warmup")
+
+            Picker("Provider mode", selection: $publishMode) {
+                Text("Dry Run").tag("dry_run")
+                Text("Live").tag("live")
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 220)
+            .accessibilityIdentifier("settings-publish-mode")
+
+            TextField("Upload-Post user", text: $uploadPostUser)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("settings-publish-user")
+
+            HStack {
+                Button {
+                    Task {
+                        await store.updatePublishSettings(
+                            warmupComplete: publishWarmupComplete,
+                            mode: publishMode,
+                            user: uploadPostUser
+                        )
+                    }
+                } label: {
+                    Label("Save Publish Settings", systemImage: "checkmark.circle")
+                }
+                .accessibilityIdentifier("settings-publish-save")
+
+                Spacer()
+
+                Text("Install key as Keychain account `uploadpost.api_key` or private `UPLOAD_POST_API_KEY` runtime env.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(16)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("settings-publish-panel")
+    }
+
     private func installerPanel(_ health: HealthResponse) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Buddy Installer")
@@ -138,5 +222,12 @@ struct SettingsView: View {
         }
         .padding(16)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func syncPublishSettings() {
+        guard let provider = store.publishStatus?.provider else { return }
+        publishWarmupComplete = provider.warmupComplete
+        publishMode = provider.mode
+        uploadPostUser = provider.user
     }
 }

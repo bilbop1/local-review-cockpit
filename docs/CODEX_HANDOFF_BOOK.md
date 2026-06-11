@@ -2,6 +2,14 @@
 
 You are an incoming Codex or Hermes-backed coding session taking over a cloned copy of Clipping Ops Cockpit. Read this as your operating manual, not as instructions to create another handoff.
 
+If you are a weaker or cheaper model, follow the files below in order and do not improvise:
+
+1. `AGENT_START_HERE.md`
+2. `docs/AI_AGENT_OPERATING_CONTRACT.md`
+3. `docs/COMMAND_COOKBOOK.md`
+4. `docs/HERMES_JOB_CONTRACT.md`
+5. This book
+
 Repository:
 
 ```text
@@ -17,37 +25,35 @@ Your job as the incoming session:
 3. Help the local operator add their own API keys, Hermes profile, Discord config, and campaign access.
 4. Keep the backend/SQLite as source of truth.
 5. Use Hermes as the normal orchestration layer.
-6. Never publish, submit payouts, connect accounts, rebrand accounts, or claim revenue guarantees.
+6. Never publish before an approved review kit, configured provider, completed account warm-up, and final GUI confirmation; never submit payouts, connect accounts, rebrand accounts, or claim revenue guarantees.
 
-## What You Inherited
+## Truth Snapshot
 
-Current truthful state from the live backend on June 3, 2026:
+Do not rely on a dated chat summary for current state. After cloning, read current state from:
 
-- No-key setup path: green.
-- Codex source/build clone path: green.
-- Public GitHub source repo: pushed and verified clean.
-- Active validated review surface: 10 rendered campaign review kits.
-- Operator approval: 10 active validated kits approved for manual prep.
-- Rejected/unsafe review kits: 2 remain rejected for revision and are not part of the inherited approved batch.
-- Active campaign counts in the approved batch: JasonTheWeen 4, YourRAGE 3, PlaqueBoyMax 3.
-- Burned-in subtitle proof: green after fresh verification across all 10 active non-rejected kits.
-- Internal local readiness: still yellow if the product target remains 5 kits per campaign / 15 total. The operator intentionally accepted the current best batch instead of padding with weak filler.
-- Customer/prebuilt app ship: yellow unless a Developer ID signed and notarized `.app` is produced. This does not block this source-build clone.
+- `GET /api/health`
+- `GET /api/readiness`
+- `GET /api/agents`
+- `GET /api/review-kits`
+- `GET /api/publish/status`
 
-Do not call the system production-ready until `/api/readiness` says the intended target is green with fresh proof.
+Historical note: the originating operator previously approved a best-current batch for manual prep, but this GitHub repo does not include those rendered videos, source media, local database rows, API keys, Hermes auth, Discord auth, or browser sessions. Every new operator must generate and approve their own local proof.
+
+Do not call the system production-ready until `/api/readiness` says the intended target is green with fresh local proof.
 
 ## First Run
 
 Start here after cloning:
 
 ```bash
-./script/setup_buddy_no_key.sh
-./script/build_and_run.sh --verify
+./script/verify_incoming_clone.sh
 ```
 
-Then run the baseline checks:
+That is the low-quota one-command path. If you need the expanded baseline, run:
 
 ```bash
+./script/setup_buddy_no_key.sh
+./script/build_and_run.sh --verify
 swift build
 PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s tests -v
 ./script/smoke_test.sh
@@ -61,7 +67,7 @@ backend/.venv/bin/python script/verify_burned_in_captions.py
 backend/.venv/bin/python script/verify_streamer_composition.py
 ```
 
-No-key mode should show missing Twitch/Kick credentials. That is correct until the operator supplies their own keys.
+No-key mode should show missing Twitch/Kick/Upload-Post credentials. That is correct until the operator supplies their own keys.
 
 ## What The System Is
 
@@ -74,12 +80,12 @@ The intended architecture is:
 - Hermes: normal orchestration layer for campaign refreshes, source discovery, review sweeps, and daily operations.
 - Deterministic scripts: source download, transcription, ffmpeg rendering, validation, packaging, and tests.
 - Discord: notifications only.
-- Human operator: the only entity allowed to approve review kits.
+- Human operator: the only entity allowed to approve review kits and confirm live publishing.
 
 The system is not:
 
 - A cloud SaaS.
-- An autopublisher.
+- A blind autopublisher that can post without review approval, provider readiness, warm-up completion, and final human confirmation.
 - A payout submitter.
 - A campaign account manager.
 - A revenue guarantee.
@@ -111,7 +117,7 @@ cd local-review-cockpit
 ./script/build_and_run.sh
 ```
 
-No-key mode should show Twitch/Kick credentials as missing. That is correct. Demo mode can open and render local proof kits; production campaign jobs must block until the local operator supplies their own credentials and source access.
+No-key mode should show Twitch/Kick/Upload-Post credentials as missing. That is correct. Demo mode can open and render local proof kits; production campaign and publish jobs must block or dry-run until the local operator supplies their own credentials, source access, account warm-up completion, and final confirmations.
 
 ## Credential Setup Expectations
 
@@ -179,6 +185,8 @@ Current excluded or demoted campaigns:
 - Haste: excluded because no linked media/source pack was proven; making content from scratch is out of scope.
 - Kalshi/Dunkman: archived from active review because they are less streamer-native and lower viewer-impetus for the current product goal.
 - Doublelift: watchlist until fresh status and budget/freshness are reconfirmed.
+
+The canonical campaign-selection standard lives in `docs/campaign-selection.md`. If this book and that file ever differ, use `docs/campaign-selection.md`.
 
 ## Source Verification Rules
 
@@ -254,6 +262,8 @@ For now, split facecam is disabled by default with `CLIPPING_OPS_ALLOW_FACE_CAM_
 
 Caption style is a production gate.
 
+The canonical caption standard lives in `docs/caption-style.md`. If this book and that file ever differ, use `docs/caption-style.md`.
+
 Current renderer rules:
 
 - Font: TikTok Sans 36pt Black.
@@ -307,7 +317,22 @@ For each kit:
 6. Approve only if it is worth manual prep.
 7. Reject with notes if anything feels off.
 
-Approval does not publish. It only marks the kit as approved for manual preparation.
+Approval does not publish. It marks the kit as approved for preparation; live Upload-Post jobs still require provider readiness, account warm-up completion, and a final GUI confirmation.
+
+## Upload-Post Autopost Readiness
+
+Upload-Post is the first live posting provider. This repo ships the dry-run/live provider interface, but it does not ship API keys or connected social accounts.
+
+Incoming operators should:
+
+1. Finish their own platform account warm-up.
+2. Add their Upload-Post API key through macOS Keychain account `uploadpost.api_key` or private runtime env `UPLOAD_POST_API_KEY`.
+3. Set the Upload-Post user/profile in Settings.
+4. Keep provider mode as `Dry Run` until dry-run jobs pass on approved kits.
+5. Switch Settings to `Live` only when account warm-up is complete.
+6. Confirm each live post from the Review Kits publish panel.
+
+Discord and Hermes may report publish job status, but SQLite remains the source of truth.
 
 ## Readiness Rules
 
@@ -366,6 +391,6 @@ Before claiming a local system is ready:
 - Final target is explicit: either 15 approved kits or a user-approved smaller batch.
 - `/api/readiness` matches the chosen target.
 - Security scan is green.
-- Desktop QA is green.
+- Desktop QA is green if the operator explicitly permits foreground GUI automation; otherwise report GUI click coverage as not rerun rather than taking over the desktop.
 - No-key installer proof is green.
 - Hermes job execution works or readiness honestly says Hermes is degraded.

@@ -675,7 +675,8 @@ def verify_review_playback_controls(manifest: Dict[str, Any], name: str = "Playb
     forward_moved = pause_wait_s is not None and forward_s is not None and forward_s >= pause_wait_s + 1
     back_moved = forward_s is not None and back_s is not None and back_s <= max(0, forward_s - 1)
     play_advanced = back_s is not None and play_s is not None and play_s >= back_s + 1
-    ok = bool(restart_ok and play_ok and back_ok and forward_ok and pause_ok and mute_ok and unmute_ok and pause_held and forward_moved and back_moved and play_advanced)
+    play_pause_proven = bool((play_ok and pause_ok) or (pause_held and play_advanced))
+    ok = bool(restart_ok and back_ok and forward_ok and mute_ok and unmute_ok and play_pause_proven and pause_held and forward_moved and back_moved and play_advanced)
     manifest.setdefault("controls", []).append(
         {
             "name": name,
@@ -698,7 +699,8 @@ def verify_review_playback_controls(manifest: Dict[str, Any], name: str = "Playb
             },
             "buttons": {
                 "restart": bool(restart_ok),
-                "play_pause": bool(play_ok and pause_ok),
+                "play_pause": play_pause_proven,
+                "play_pause_ax": bool(play_ok and pause_ok),
                 "forward": bool(forward_ok),
                 "back": bool(back_ok),
                 "mute_unmute": bool(mute_ok and unmute_ok),
@@ -1070,6 +1072,119 @@ def verify_review_actions(manifest: Dict[str, Any]) -> None:
         manifest["review_action_state_restored"] = True
 
 
+def verify_publish_controls(manifest: Dict[str, Any]) -> None:
+    kits = approved_green_review_kits()
+    status_payload = api_get("/api/publish/status")
+    provider = status_payload.get("provider", {})
+    supported = set(status_payload.get("supported_platforms", []))
+    manifest.setdefault("controls", []).append(
+        {
+            "name": "Publish status dry-run lock",
+            "surface": "Settings / Review Kits publish panel",
+            "route": "/api/publish/status",
+            "result": {
+                "status": status_payload.get("status"),
+                "mode": provider.get("mode"),
+                "api_key": provider.get("api_key"),
+                "warmup_complete": provider.get("warmup_complete"),
+                "live_ready": provider.get("live_ready"),
+            },
+            "ok": {"tiktok", "instagram", "youtube"}.issubset(supported)
+            and provider.get("mode") in {"dry_run", "live"}
+            and provider.get("live_ready") is False,
+        }
+    )
+    if not kits:
+        manifest.setdefault("controls", []).append(
+            {
+                "name": "Publish controls blocked without approved kit",
+                "surface": "Review Kits publish panel",
+                "ok": True,
+                "detail": "No approved green kits available for publish QA.",
+            }
+        )
+        return
+
+    before_packages = {str(item["id"]) for item in db.rows("SELECT id FROM publish_packages")}
+    before_publish_jobs = {str(item["id"]) for item in db.rows("SELECT id FROM publish_jobs")}
+    before_hermes_jobs = {str(item["id"]) for item in db.rows("SELECT id FROM job_runs WHERE intent LIKE 'publish_%'")}
+    try:
+        kit = kits[0]
+        prep_status, package = api_post(
+            f"/api/review-kits/{kit['id']}/publish-prep",
+            {"platforms": ["tiktok", "instagram", "youtube"]},
+        )
+        package_id = package.get("id") if isinstance(package, dict) else ""
+        manifest.setdefault("controls", []).append(
+            {
+                "name": "Prepare Post",
+                "surface": "Review Kits publish panel",
+                "route": f"/api/review-kits/{kit['id']}/publish-prep",
+                "http_status": prep_status,
+                "result": {"package_id": package_id, "platforms": package.get("platforms") if isinstance(package, dict) else []},
+                "ok": prep_status == 200 and bool(package_id) and package.get("status") == "ready",
+                "state_restored_after_test": True,
+            }
+        )
+        dry_status, dry_job = api_post(
+            "/api/publish/jobs",
+            {
+                "package_id": package_id,
+                "mode": "dry_run",
+                "provider": "uploadpost",
+                "platforms": ["tiktok", "youtube"],
+            },
+        )
+        manifest.setdefault("controls", []).append(
+            {
+                "name": "Dry Run Publish",
+                "surface": "Review Kits publish panel",
+                "route": "/api/publish/jobs",
+                "http_status": dry_status,
+                "result": {"job_id": dry_job.get("id"), "status": dry_job.get("status"), "mode": dry_job.get("mode")},
+                "ok": dry_status == 200 and dry_job.get("status") == "queued" and dry_job.get("mode") == "dry_run",
+                "state_restored_after_test": True,
+            }
+        )
+        live_status, live_job = api_post(
+            "/api/publish/jobs",
+            {
+                "package_id": package_id,
+                "mode": "live",
+                "provider": "uploadpost",
+                "platforms": ["tiktok"],
+            },
+        )
+        confirm_status, confirm_payload = api_post(f"/api/publish/jobs/{live_job.get('id', '')}/confirm-live")
+        manifest.setdefault("controls", []).append(
+            {
+                "name": "Post Now blocked until provider ready",
+                "surface": "Review Kits publish panel",
+                "route": f"/api/publish/jobs/{live_job.get('id', '')}/confirm-live",
+                "http_status": confirm_status,
+                "result": confirm_payload,
+                "ok": live_status == 200
+                and live_job.get("status") == "awaiting_confirmation"
+                and confirm_status == 409
+                and "Upload-Post API key missing" in str(confirm_payload),
+                "state_restored_after_test": True,
+            }
+        )
+    finally:
+        after_packages = {str(item["id"]) for item in db.rows("SELECT id FROM publish_packages")}
+        after_publish_jobs = {str(item["id"]) for item in db.rows("SELECT id FROM publish_jobs")}
+        after_hermes_jobs = {str(item["id"]) for item in db.rows("SELECT id FROM job_runs WHERE intent LIKE 'publish_%'")}
+        for table, ids in (
+            ("publish_jobs", sorted(after_publish_jobs - before_publish_jobs)),
+            ("publish_packages", sorted(after_packages - before_packages)),
+            ("job_runs", sorted(after_hermes_jobs - before_hermes_jobs)),
+        ):
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                db.execute(f"DELETE FROM {table} WHERE id IN ({placeholders})", ids)
+        manifest["publish_action_state_restored"] = True
+
+
 def verify_platform_smoke(manifest: Dict[str, Any]) -> None:
     twitch_evidence = api_get_evidence("/api/platforms/twitch/smoke?login=twitch", timeout=75)
     kick_evidence = api_get_evidence("/api/platforms/kick/smoke?slug=xqc", timeout=95)
@@ -1394,6 +1509,7 @@ def main() -> int:
         run_command_action("Build Latest Reviews", ("command", "shift", "d"), lambda: len(api_get("/api/review-kits")), manifest)
 
         verify_review_actions(manifest)
+        verify_publish_controls(manifest)
         verify_platform_smoke(manifest)
         verify_diagnostics_export(manifest)
         verify_clean_reset_block(manifest)

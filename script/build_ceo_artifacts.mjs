@@ -349,7 +349,7 @@ async function main() {
   const safety = workbook.worksheets.add("Safety Gates");
   safety.getRange("A1:D1").values = [["Gate", "Status", "Evidence", "Comment"]];
   const safetyRows = [
-    ["Autopublish", health.safety.autopublish, "/api/health", "No publishing route is exposed."],
+    ["Autopost", health.safety.autopublish, "/api/publish/status", "Posting requires approved kit, provider config, completed warm-up, and final GUI confirmation."],
     ["Payout submission", health.safety.payout_submission, "/api/health", "Out of scope remains hard-blocked."],
     ["Account connection", health.safety.account_connection, "/api/health", "No-key mode blocks credential exchange."],
     ["Campaign production", gate.status, "/api/campaign-gate", gate.blocker],
@@ -467,7 +467,7 @@ async function main() {
     .map((row) => `- ${row.createdAt || "unknown time"}: ${row.campaign} - ${row.title} (${row.views} views)`)
     .join("\n") || "- No active campaign-linked production kits.";
   const campaignVerdict = health.production_green
-    ? "All CEO gates are green from current evidence. Real campaign rendering is still limited to the nomination/review workflow; publishing, uploads, payouts, and account changes remain blocked."
+    ? "All CEO gates are green from current evidence. Real campaign rendering is still limited to the nomination/review workflow; posting is gated by provider readiness, warm-up, and final confirmation while payouts and account changes remain blocked."
     : `Local readiness remains **not green** because these evidence gates are not green: ${nonGreenFeatures || "unknown"}. The source-build handoff zip is a separate Codex/buddy lane and does not require Developer ID or notarization; only a prebuilt Mac app distribution requires signing/notarization. The final buddy book/install wrap-up still waits for the approved review batch.`;
   const productionRenderDirs = await completeRenderDirs(health.render_root);
   const demoRenderDirs = await completeRenderDirs(health.demo_render_root || "");
@@ -514,7 +514,7 @@ async function main() {
     : "There is no fresh local reference-style study to hide behind. The campaign final profile is the only evidence that matters now because it is tied to approved campaign sources and evidence instead of demo footage.";
   const bluntRendererCritique = [
     renderProofIsGreen
-      ? `The renderer now has ${campaignProofGreenRows.length} approved green campaign final kit(s) from local source media, stored campaign rules, timed transcript evidence, and burned-in subtitle frame proof. Yellow/rejected timing-history kits remain audit records only. This proves campaign-scoped review mechanics; it still does not prove autonomous publishing or customer distribution.`
+      ? `The renderer now has ${campaignProofGreenRows.length} approved green campaign final kit(s) from local source media, stored campaign rules, timed transcript evidence, and burned-in subtitle frame proof. Yellow/rejected timing-history kits remain audit records only. This proves campaign-scoped review mechanics; posting still requires provider readiness, warm-up, and final confirmation.`
       : referenceCritiqueLead,
     "Against the stored rubric, active campaign outputs should use the white headline card, central crop, side-fill background, and fast captions while avoiding internal labels or fake proof language.",
     demoRootBatchBroken
@@ -624,11 +624,11 @@ Figma diagram and Figma Slides generation were attempted, but the connected tool
 2. Use Campaigns to refresh the current active streamer-first project set: ${activeCampaignNames.join(", ") || "none"}.
 3. Use Sources only for advanced API checks, watchlist candidates, and future creator campaigns.
 4. Keep demo/local proof kits out of the production Review Kits surface; build campaign review kits only after source provenance and local media are stored.
-5. Review videos in Review Kits; approval never publishes.
+5. Review videos in Review Kits; approval enables publish prep only and live posting still requires provider readiness plus final confirmation.
 
 ## Hard Stops
 
-- No autopublish.
+- No posting before approved kit, Upload-Post/provider readiness, completed warm-up, and final GUI confirmation.
 - No payout submission.
 - No account connection or account rebrand.
 - No real campaign render without stored campaign rules, source URL, provenance, and source availability.
@@ -652,13 +652,13 @@ Local-first macOS clipping operations appliance. Index many, render few, publish
 See \`${rel(architecturePath)}\`.
 
 ## 4. Safety
-Autopublish, payouts, account mutation, gambling clearance, and revenue guarantees remain blocked.
+Posting before approved kit, provider readiness, completed warm-up, and final confirmation remains blocked. Payouts, account mutation, gambling clearance, and revenue guarantees remain blocked.
 
 ## 5. Current Readiness
 Codex source handoff is a source/build zip lane and does not require Apple notarization. Prebuilt customer Mac app distribution is separate and remains yellow until Developer ID signing/notarization is proven. Yellow is never ready.
 
 ## 6. Next Proof
-Fix every non-green readiness row, rerun LaunchAgent/no-key/handoff/release/GUI/security checks, regenerate this artifact pack, and keep publishing/payout/account actions blocked.
+Fix every non-green readiness row, rerun LaunchAgent/no-key/handoff/release/GUI/security checks, regenerate this artifact pack, and keep posting gated while payout/account actions stay blocked.
 `;
   await writeText(path.join(outDir, "ceo-product-deck.md"), deck);
 

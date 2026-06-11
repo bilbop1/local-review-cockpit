@@ -2,6 +2,8 @@
 
 Streamer clips should preserve the actual moment first. Facecam extraction is optional, not automatic.
 
+Use this together with `docs/campaign-selection.md` and `docs/caption-style.md`. Do not create split facecam layouts as filler or because a detector guessed a facecam exists.
+
 Rules:
 
 - Prefer native landscape Twitch/Kick source media when available.

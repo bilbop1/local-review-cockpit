@@ -36,8 +36,9 @@ SKIP_PARTS = {
 SECRET_PATTERNS = [
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |PRIVATE )?PRIVATE KEY-----", re.IGNORECASE),
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
+    re.compile(r"Apikey\s+(?!<redacted>|configured|missing|your-api-key-here|<api_key>)[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
     re.compile(r"(access_token|refresh_token|discord_token|bot_token|authorization)\s*[:=]\s*[\"'][^\"']{8,}[\"']", re.IGNORECASE),
-    re.compile(r"(client_secret|kick_secret|twitch_secret|secret)\s*[:=]\s*[\"'](?!configured|missing|redacted)[^\"']{8,}[\"']", re.IGNORECASE),
+    re.compile(r"(client_secret|kick_secret|twitch_secret|upload[_-]?post[_-]?api[_-]?key|uploadpost_api_key|secret)\s*[:=]\s*[\"'](?!configured|missing|redacted)[^\"']{8,}[\"']", re.IGNORECASE),
     re.compile(r"\b(?:xox[baprs]-|gh[pousr]_|sk-[A-Za-z0-9])[A-Za-z0-9_-]{16,}\b", re.IGNORECASE),
     re.compile(r"\b[0-9a-f]{64}\b", re.IGNORECASE),
 ]
@@ -53,6 +54,8 @@ HIGH_ENTROPY_CONTEXT_KEYS = (
     "password",
     "private_key",
     "client_secret",
+    "upload_post_api_key",
+    "uploadpost_api_key",
 )
 PUBLIC_SOURCE_URL_DOMAINS = (
     "twitch.tv/",

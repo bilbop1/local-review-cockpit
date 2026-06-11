@@ -133,7 +133,7 @@ payload = {
     "excluded": sorted(skip_parts | skip_globs),
     "bad_entries": bad_entries[:50],
     "ok": not bad_entries and len(files) > 0,
-    "note": "For buddy Codex sessions: unzip, install local dependencies, provide their own API keys/Hermes/Discord config, and build locally. This is not a notarized prebuilt macOS app.",
+    "note": "For buddy Codex sessions: unzip, install local dependencies, provide their own Twitch/Kick/Upload-Post API keys plus Hermes/Discord config, and build locally. This is not a notarized prebuilt macOS app.",
 }
 manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 print(manifest_path)

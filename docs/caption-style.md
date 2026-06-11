@@ -2,6 +2,8 @@
 
 This project now treats caption styling as a production gate, not a loose renderer preference.
 
+Incoming agents must read `AGENT_START_HERE.md` and `docs/AI_AGENT_OPERATING_CONTRACT.md` before editing this standard. Do not change caption timing, placement, or top-card rules without rerunning the verifier commands in this file.
+
 ## Font
 
 - Primary caption font: TikTok Sans 36pt Black.
