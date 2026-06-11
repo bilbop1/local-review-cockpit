@@ -21,8 +21,8 @@ echo "1/5 No-key setup"
 "$ROOT_DIR/script/setup_buddy_no_key.sh"
 
 echo
-echo "2/5 Swift build"
-swift build
+echo "2/5 Web cockpit build"
+"$ROOT_DIR/script/build_web.sh"
 
 echo
 echo "3/5 Backend unit tests"

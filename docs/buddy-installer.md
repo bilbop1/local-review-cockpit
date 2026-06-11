@@ -20,7 +20,7 @@ https://github.com/bilbop1/local-review-cockpit
 
 The originating operator approved the current active validated review batch for manual prep before publishing this source repo. The repository still does not include those review videos or source media.
 
-The installer checks for Swift, `uv`, Python, `ffmpeg`, `ffprobe`, and Hermes, then builds the app, starts the local backend, renders demo kits, and runs smoke tests. It runs with `CLIPPING_OPS_NO_KEY=1` and an isolated `CLIPPING_OPS_HOME` so ambient Keychain credentials are ignored.
+The setup checks for npm, `uv`, Python, `ffmpeg`, `ffprobe`, and Hermes, then builds the web cockpit, starts the local backend, renders demo kits, and runs smoke tests. It runs with `CLIPPING_OPS_NO_KEY=1` and an isolated `CLIPPING_OPS_HOME` so ambient Keychain credentials are ignored.
 
 It intentionally does not copy:
 
@@ -59,4 +59,4 @@ cd local-review-cockpit
 ./script/build_and_run.sh
 ```
 
-Open the Settings pane in the app to see which capabilities are ready, degraded, or blocked.
+Open `http://127.0.0.1:8765/app/settings` to see which capabilities are ready, degraded, or blocked.

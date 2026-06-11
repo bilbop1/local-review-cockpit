@@ -14,8 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "artifacts" / "startup" / "startup-agents.json"
 BACKEND_LABEL = "com.bilbop.ClippingOpsCockpit.backend"
 APP_LABEL = "com.bilbop.ClippingOpsCockpit.app"
-APP_NAME = "ClippingOpsCockpit"
-APP_BUNDLE = ROOT / "dist" / "Clipping Ops Cockpit.app"
+WEB_APP = "http://127.0.0.1:8765/app"
 
 
 def launchctl_state(label: str) -> dict[str, Any]:
@@ -49,31 +48,37 @@ def backend_health() -> dict[str, Any]:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
-def app_process() -> dict[str, Any]:
-    result = subprocess.run(["pgrep", "-x", APP_NAME], text=True, capture_output=True, timeout=5)
-    pids = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    return {"ok": bool(pids), "pids": pids, "bundle_exists": APP_BUNDLE.exists()}
+def web_app_health() -> dict[str, Any]:
+    try:
+        with urllib.request.urlopen(WEB_APP, timeout=3) as response:
+            body = response.read(4096).decode("utf-8", errors="replace")
+        return {
+            "ok": response.status == 200 and '<div id="root">' in body,
+            "url": WEB_APP,
+            "built_assets": "/app/assets/" in body,
+        }
+    except Exception as exc:
+        return {"ok": False, "url": WEB_APP, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def main() -> int:
     backend_agent = launchctl_state(BACKEND_LABEL)
     app_agent = launchctl_state(APP_LABEL)
     backend = backend_health()
-    app = app_process()
+    app = web_app_health()
     ok = (
         backend_agent["installed"]
         and backend_agent["state"] == "running"
         and backend.get("ok")
         and app_agent["installed"]
         and app.get("ok")
-        and app.get("bundle_exists")
     )
     payload = {
         "ok": bool(ok),
         "backend_agent": backend_agent,
         "app_agent": app_agent,
         "backend_health": backend,
-        "app_process": app,
+        "web_app": app,
         "blocker": "" if ok else "Startup agents are not both healthy; reinstall with script/install_startup_agents.sh.",
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)

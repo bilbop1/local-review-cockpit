@@ -16,7 +16,7 @@ Repository:
 https://github.com/bilbop1/local-review-cockpit
 ```
 
-This repo is a source-build project, not a media drop and not a prebuilt notarized app. It contains the app, backend, scripts, docs, tests, and Hermes prompts needed to rebuild and operate the same local pipeline without inheriting the original operator's secrets.
+This repo is a source-build project, not a media drop and not a prebuilt notarized app. It contains the web cockpit, backend, scripts, docs, tests, and Hermes prompts needed to rebuild and operate the same local pipeline without inheriting the original operator's secrets.
 
 Your job as the incoming session:
 
@@ -54,9 +54,11 @@ That is the low-quota one-command path. If you need the expanded baseline, run:
 ```bash
 ./script/setup_buddy_no_key.sh
 ./script/build_and_run.sh --verify
-swift build
+npm --prefix web run typecheck
+npm --prefix web run build
 PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s tests -v
 ./script/smoke_test.sh
+backend/.venv/bin/python script/web_app_smoke.py
 backend/.venv/bin/python script/security_scan.py
 ```
 
@@ -75,7 +77,7 @@ Clipping Ops Cockpit is a local-first macOS clipping operations appliance.
 
 The intended architecture is:
 
-- Swift macOS GUI: simple human review cockpit.
+- Web cockpit: simple human review cockpit at `http://127.0.0.1:8765/app`.
 - SQLite/backend: source of truth, safety gates, media records, audit log, job ledger, and artifacts.
 - Hermes: normal orchestration layer for campaign refreshes, source discovery, review sweeps, and daily operations.
 - Deterministic scripts: source download, transcription, ffmpeg rendering, validation, packaging, and tests.
@@ -117,7 +119,7 @@ cd local-review-cockpit
 ./script/build_and_run.sh
 ```
 
-No-key mode should show Twitch/Kick/Upload-Post credentials as missing. That is correct. Demo mode can open and render local proof kits; production campaign and publish jobs must block or dry-run until the local operator supplies their own credentials, source access, account warm-up completion, and final confirmations.
+No-key mode should show Twitch/Kick/Upload-Post credentials as missing. That is correct. The local web cockpit should open at `http://127.0.0.1:8765/app`; production campaign and publish jobs must block or dry-run until the local operator supplies their own credentials, source access, account warm-up completion, and final confirmations.
 
 ## Credential Setup Expectations
 

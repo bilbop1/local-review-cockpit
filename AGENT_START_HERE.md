@@ -13,7 +13,7 @@ Work from repository truth:
 - Treat Hermes as orchestration.
 - Treat scripts as deterministic media/test workers.
 - Treat Discord as notifications only.
-- Treat the GUI as the human approval surface.
+- Treat the browser cockpit at `http://127.0.0.1:8765/app` as the human approval surface.
 
 ## One Command Start
 
@@ -50,6 +50,15 @@ Do not run foreground mouse-driven GUI QA on an operator's active Mac unless the
 
 ## Current Product Shape
 
-The repo is a source-build local macOS appliance, not a prebuilt notarized app and not a media drop. Each operator supplies their own credentials, Hermes profile, Discord config, campaign access, account warm-up, and final posting confirmations.
+The repo is a source-build local web cockpit plus Python backend, not a prebuilt notarized app and not a media drop. Each operator supplies their own credentials, Hermes profile, Discord config, campaign access, account warm-up, and final posting confirmations.
+
+Normal operation:
+
+```bash
+./script/build_and_run.sh --verify
+./script/build_and_run.sh
+```
+
+Then open `http://127.0.0.1:8765/app`. The Swift app in `Sources/ClippingOpsCockpit` is legacy reference during migration, not the supported buddy UI.
 
 Live Upload-Post work is intentionally locked until account warm-up is complete and the operator provides their own key locally.

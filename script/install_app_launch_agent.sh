@@ -4,29 +4,26 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LABEL="com.bilbop.ClippingOpsCockpit.app"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-APP_NAME="ClippingOpsCockpit"
-DISPLAY_NAME="Clipping Ops Cockpit"
-APP_BUNDLE="$ROOT_DIR/dist/$DISPLAY_NAME.app"
+WEB_URL="${CLIPPING_OPS_WEB_URL:-http://127.0.0.1:8765/app}"
 APP_SUPPORT="$HOME/Library/Application Support/ClippingOpsCockpit"
 LOG_DIR="$APP_SUPPORT/logs"
 BIN_DIR="$APP_SUPPORT/bin"
 RUNNER="$BIN_DIR/app_launch_agent_runner.sh"
 
 mkdir -p "$LOG_DIR" "$BIN_DIR" "$HOME/Library/LaunchAgents"
-"$ROOT_DIR/script/build_and_run.sh" --stage-only >/dev/null
+"$ROOT_DIR/script/build_web.sh" >/dev/null
 
 cat >"$RUNNER" <<RUNNER
 #!/usr/bin/env bash
 set -u
 ROOT_DIR="$ROOT_DIR"
-APP_NAME="$APP_NAME"
-APP_BUNDLE="$APP_BUNDLE"
+WEB_URL="$WEB_URL"
 LOG_DIR="$LOG_DIR"
 mkdir -p "\$LOG_DIR"
 {
   echo "\$(date -u +%Y-%m-%dT%H:%M:%SZ) starting $LABEL"
   echo "cwd=\$ROOT_DIR"
-  echo "bundle=\$APP_BUNDLE"
+  echo "url=\$WEB_URL"
   cd "\$ROOT_DIR" || exit 78
   export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin"
   backend_ready=0
@@ -44,15 +41,11 @@ mkdir -p "\$LOG_DIR"
     echo "backend API did not become ready at login"
     exit 75
   fi
-  if [[ ! -d "\$APP_BUNDLE" ]]; then
-    echo "app bundle missing; run script/install_app_launch_agent.sh from the workspace to stage it"
+  if [[ ! -f "\$ROOT_DIR/web/dist/index.html" ]]; then
+    echo "web build missing; run script/install_app_launch_agent.sh from the workspace to rebuild it"
     exit 78
   fi
-  if pgrep -x "\$APP_NAME" >/dev/null 2>&1; then
-    /usr/bin/open "\$APP_BUNDLE"
-    exit 0
-  fi
-  /usr/bin/open "\$APP_BUNDLE"
+  /usr/bin/open "\$WEB_URL"
 } >>"\$LOG_DIR/app.launchd.wrapper.log" 2>&1
 RUNNER
 chmod +x "$RUNNER"
@@ -88,7 +81,7 @@ launchctl kickstart -k "gui/$(id -u)/$LABEL"
 
 app_ready=0
 for _ in {1..40}; do
-  if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
+  if /usr/bin/curl -fsS --max-time 2 "$WEB_URL" >/dev/null 2>&1; then
     app_ready=1
     break
   fi
@@ -96,7 +89,7 @@ for _ in {1..40}; do
 done
 
 if [[ "$app_ready" == "1" ]]; then
-  echo "App LaunchAgent installed and app process is running: $LABEL"
+  echo "App LaunchAgent installed and web cockpit is reachable: $WEB_URL"
   exit 0
 fi
 

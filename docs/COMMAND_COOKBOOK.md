@@ -16,13 +16,19 @@ Runs no-key setup, build/test/smoke/security checks, and prints the next missing
 ./script/build_and_run.sh --verify
 ```
 
-Builds the SwiftPM app, stages `dist/Clipping Ops Cockpit.app`, starts the backend, and verifies launch wiring.
+Builds the browser cockpit, starts the backend, and verifies `/app` loads from `http://127.0.0.1:8765/app`.
 
 ```bash
 ./script/build_and_run.sh
 ```
 
-Starts the backend and opens the macOS app for normal operator use.
+Starts the backend, builds the browser cockpit, and prints the local URL for normal operator use.
+
+```bash
+./script/build_and_run.sh --dev
+```
+
+Runs Vite at `http://127.0.0.1:5173/app` with `/api` and `/media` proxied to the local backend. Use this when changing the UI.
 
 ## Backend Health
 
@@ -38,9 +44,11 @@ Use these before claiming readiness. Red/yellow rows are blockers or missing pro
 ## Tests
 
 ```bash
-swift build
+npm --prefix web run typecheck
+npm --prefix web run build
 PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s tests -v
 ./script/smoke_test.sh
+backend/.venv/bin/python script/web_app_smoke.py
 backend/.venv/bin/python script/security_scan.py
 ```
 
@@ -103,4 +111,4 @@ Expected before warm-up/key setup: yellow, key missing, warm-up incomplete, live
 
 ## GUI QA Boundary
 
-Do not run `script/desktop_qa.py` on an active user desktop unless the operator explicitly approves foreground interaction. Prefer API/script proof for incoming setup.
+Do not run `script/desktop_qa.py` on an active user desktop unless the operator explicitly approves foreground interaction. Prefer `/app` browser checks, API/script proof, and headless browser verification for incoming setup.

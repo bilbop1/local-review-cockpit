@@ -22,9 +22,10 @@ done
 
 cd "$ROOT_DIR"
 
-swift build
+"$ROOT_DIR/script/build_web.sh"
 PYTHONPATH=backend "$PYTHON_BIN" -m unittest discover -s tests -v
 "$ROOT_DIR/script/smoke_test.sh"
+"$PYTHON_BIN" "$ROOT_DIR/script/web_app_smoke.py"
 "$PYTHON_BIN" "$ROOT_DIR/script/prune_irrelevant_review_surface.py" || true
 "$PYTHON_BIN" "$ROOT_DIR/script/reconcile_source_media.py" || true
 PYTHONPATH=backend "$PYTHON_BIN" - <<'PY' || true
@@ -62,7 +63,11 @@ else
   "$ROOT_DIR/script/package_release.sh" --adhoc || true
 fi
 "$ROOT_DIR/script/setup_buddy_no_key.sh"
-"$PYTHON_BIN" "$ROOT_DIR/script/desktop_qa.py"
+if [[ "${CLIPPING_OPS_ALLOW_FOREGROUND_GUI_QA:-0}" == "1" ]]; then
+  "$PYTHON_BIN" "$ROOT_DIR/script/desktop_qa.py"
+else
+  echo "Skipping legacy foreground desktop QA. Set CLIPPING_OPS_ALLOW_FOREGROUND_GUI_QA=1 only with operator approval." >&2
+fi
 node "$ROOT_DIR/script/build_ceo_artifacts.mjs"
 node "$ROOT_DIR/script/build_ceo_artifacts.mjs"
 

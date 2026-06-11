@@ -4,7 +4,7 @@
 
 1. Run `./script/install_backend_launch_agent.sh`.
 2. Run `./script/build_and_run.sh --verify`.
-3. Open the app and confirm Settings shows local readiness red/yellow until every review and source gate has fresh proof.
+3. Open `http://127.0.0.1:8765/app` and confirm Settings shows local readiness red/yellow until every review and source gate has fresh proof.
 
 ## Daily Workflow
 

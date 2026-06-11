@@ -1,6 +1,6 @@
 # Local Review Cockpit
 
-Local Review Cockpit is a macOS app and local backend for running agent-assisted review work without letting the agent publish, spend money, or touch private account credentials.
+Local Review Cockpit is a browser-based local control cockpit and backend for running agent-assisted review work without letting the agent publish, spend money, or touch private account credentials.
 
 I built it because most agent demos stop at "the model wrote a draft." The work after that is where things usually break: source checks, queue state, review notes, retry logic, rendered previews, safety gates, and a human sign-off that is hard to skip by accident.
 
@@ -22,8 +22,9 @@ That command verifies the source-build clone without requiring secrets. Missing 
 
 ## What Is In The Repo
 
-- A SwiftPM macOS cockpit app in `Sources/ClippingOpsCockpit`.
+- A React/Vite browser cockpit in `web/`, served locally at `http://127.0.0.1:8765/app`.
 - A Python backend in `backend/clipping_ops_backend` with SQLite-backed state, render queue handling, platform models, credentials helpers, publish gates, and local API routes.
+- A legacy SwiftPM macOS cockpit in `Sources/ClippingOpsCockpit`, preserved as reference only during the web migration.
 - Hermes prompt files in `hermes/` for research, review, and ops work.
 - Scripts for setup, smoke tests, optional desktop QA, release checks, render validation, source reconciliation, and review-kit generation.
 - Operator docs for startup, safety gates, OAuth setup, caption style, Discord handoff, incoming agent setup, and release readiness.
@@ -47,13 +48,25 @@ cd local-review-cockpit
 ./script/build_and_run.sh --verify
 ```
 
-Run the app:
+Run the cockpit:
 
 ```bash
 ./script/build_and_run.sh
 ```
 
-The run script starts the local backend at `http://127.0.0.1:8765`, builds the SwiftPM app, stages `dist/Clipping Ops Cockpit.app`, and launches it as a foreground macOS app.
+The run script starts the local backend at `http://127.0.0.1:8765`, builds the web app, and prints the browser URL:
+
+```text
+http://127.0.0.1:8765/app
+```
+
+For UI development, use:
+
+```bash
+./script/build_and_run.sh --dev
+```
+
+That starts Vite at `http://127.0.0.1:5173/app` with API proxying to the local backend. The built `/app` remains dynamic through API polling; it is not a static screenshot dashboard.
 
 ## Useful Commands
 
@@ -70,9 +83,9 @@ The run script starts the local backend at `http://127.0.0.1:8765`, builds the S
 ./script/render_demo_kits.sh
 ```
 
-Do not run `python3 script/desktop_qa.py` on an active user desktop unless the operator explicitly approves foreground GUI interaction.
+Do not run `python3 script/desktop_qa.py` on an active user desktop unless the operator explicitly approves foreground GUI interaction. The supported UI is the browser cockpit.
 
-`script/package_release.sh` is separate: Developer ID signing and notarization are only required when distributing a prebuilt `.app` to normal Mac users.
+`script/package_release.sh` is legacy/separate: Developer ID signing and notarization are only required when distributing a prebuilt native `.app`, not for this source-build web cockpit.
 
 ## Safety Model
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -25,7 +26,9 @@ from .renderer import create_demo_kits, create_selected_feeder_kits, validate_vi
 
 HOST = "127.0.0.1"
 PORT = 8765
-API_VERSION = "2026-06-03-streamer-campaigns-01"
+API_VERSION = "2026-06-11-web-cockpit-01"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WEB_DIST_DIR = REPO_ROOT / "web" / "dist"
 DIAGNOSTIC_SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
     re.compile(r"Apikey\s+(?!<redacted>|configured|missing)[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE),
@@ -941,12 +944,114 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Access-Control-Allow-Origin", "http://localhost")
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
             return
+
+    def redirect(self, location: str) -> None:
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def send_binary_file(
+        self,
+        path: Path,
+        *,
+        content_type: str | None = None,
+        cache_control: str = "no-store",
+    ) -> None:
+        if not path.exists() or not path.is_file():
+            self.send_json({"error": "file_not_found", "path": path.name}, HTTPStatus.NOT_FOUND)
+            return
+        content_type = content_type or mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        total = path.stat().st_size
+        range_header = self.headers.get("Range", "")
+        start = 0
+        end = total - 1
+        status = HTTPStatus.OK
+        if range_header.startswith("bytes="):
+            match = re.match(r"bytes=(\d*)-(\d*)", range_header)
+            if match:
+                raw_start, raw_end = match.groups()
+                if raw_start:
+                    start = int(raw_start)
+                if raw_end:
+                    end = min(int(raw_end), total - 1)
+                if start >= total or end < start:
+                    self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    self.send_header("Content-Range", f"bytes */{total}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                status = HTTPStatus.PARTIAL_CONTENT
+        length = end - start + 1
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(length))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Cache-Control", cache_control)
+            if status == HTTPStatus.PARTIAL_CONTENT:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{total}")
+            self.end_headers()
+            with path.open("rb") as handle:
+                handle.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = handle.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def send_web_app(self, request_path: str) -> None:
+        index = WEB_DIST_DIR / "index.html"
+        if not index.exists():
+            self.send_json(
+                {
+                    "error": "web_app_not_built",
+                    "detail": "Run npm --prefix web install and npm --prefix web run build, then reload /app.",
+                },
+                HTTPStatus.SERVICE_UNAVAILABLE,
+            )
+            return
+        relative = request_path.removeprefix("/app").lstrip("/") or "index.html"
+        candidate = (WEB_DIST_DIR / relative).resolve()
+        try:
+            candidate.relative_to(WEB_DIST_DIR.resolve())
+        except ValueError:
+            self.send_json({"error": "invalid_app_asset"}, HTTPStatus.BAD_REQUEST)
+            return
+        target = candidate if candidate.exists() and candidate.is_file() else index
+        cache_control = "public, max-age=31536000, immutable" if "/assets/" in request_path else "no-store"
+        self.send_binary_file(target, cache_control=cache_control)
+
+    def send_review_media(self, kit_id: str) -> None:
+        kit = db.one("SELECT * FROM render_kits WHERE id = ?", (kit_id,))
+        if not kit:
+            self.send_json({"error": "missing_kit"}, HTTPStatus.NOT_FOUND)
+            return
+        video_path = Path(str(kit.get("review_video_path", ""))).expanduser()
+        if not video_path.exists():
+            self.send_json({"error": "missing_video", "kit_id": kit_id}, HTTPStatus.NOT_FOUND)
+            return
+        resolved = video_path.resolve()
+        allowed_roots = [
+            db.render_root().resolve(),
+            db.demo_render_root().resolve(),
+            db.app_support_dir().resolve(),
+            REPO_ROOT.resolve(),
+        ]
+        if not any(resolved == root or root in resolved.parents for root in allowed_roots):
+            self.send_json({"error": "media_path_not_allowed", "kit_id": kit_id}, HTTPStatus.FORBIDDEN)
+            return
+        self.send_binary_file(resolved, content_type="video/mp4", cache_control="no-store")
 
     def do_OPTIONS(self) -> None:
         self.send_response(HTTPStatus.NO_CONTENT)
@@ -958,7 +1063,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         try:
             path = urlparse(self.path).path
-            if path == "/api/version":
+            if path == "/":
+                self.redirect("/app")
+            elif path == "/app" or path.startswith("/app/"):
+                self.send_web_app(path)
+            elif path.startswith("/media/review-kits/") and path.endswith("/review.mp4"):
+                parts = [part for part in path.split("/") if part]
+                kit_id = parts[2] if len(parts) == 4 else ""
+                self.send_review_media(kit_id)
+            elif path == "/api/version":
                 self.send_json({"status": "ok", "api_version": API_VERSION})
             elif path == "/api/health":
                 self.send_json(health())
