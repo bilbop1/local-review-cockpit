@@ -16,7 +16,7 @@ Repository:
 https://github.com/bilbop1/local-review-cockpit
 ```
 
-This repo is a source-build project, not a media drop and not a prebuilt notarized app. It contains the web cockpit, backend, scripts, docs, tests, and Hermes prompts needed to rebuild and operate the same local pipeline without inheriting the original operator's secrets.
+This repo is a source-build project, not a media drop and not a native app bundle. It contains the web cockpit, backend, scripts, docs, tests, and Hermes prompts needed to rebuild and operate the same local pipeline without inheriting the original operator's secrets.
 
 Your job as the incoming session:
 
@@ -190,6 +190,10 @@ Current excluded or demoted campaigns:
 
 The canonical campaign-selection standard lives in `docs/campaign-selection.md`. If this book and that file ever differ, use `docs/campaign-selection.md`.
 
+Fresh streamer indexing must use the 24h->48h->72h->4d->5d ladder. The old 35-day top-recent sweep is not normal production proof. The daily review factory target is three active campaigns, one review kit per campaign every three hours, capped at 24 per local day.
+
+MiniMax Hermes is the normal agent lane. Configure the local `clipping-ops-minimax` profile with MiniMax-M3 and run `./script/verify_minimax_hermes.sh` before claiming Hermes-native readiness.
+
 ## Source Verification Rules
 
 A source is not verified just because a title exists in an API response.
@@ -272,6 +276,7 @@ Current renderer rules:
 - Output size: 1080x1920.
 - Campaign final renders must include a persistent top summary hook card plus burned-in subtitles.
 - The top hook should create context and tension without spoiling the payoff, matching the TikTok reference direction from `https://www.tiktok.com/t/ZTBDvvEfD/`.
+- Campaign-short renders run a pre-render top-card quality gate. Hooks that are generic, duplicated, raw-title echoes, quote dumps, too short/long, or internally worded block as `blocked_hook_quality` before ffmpeg work starts; Hermes should retry with better hook copy or a better clip candidate instead of relying on Codex to curate cards by hand.
 - The top hook card should visually match the reference: author the white rounded rectangle in 720x1280 source-design space, then upscale it into the 1080x1920 render with the video. Do not draw the hook as crisp native-1080 text. In final output the white card sits at x=99-980, y=336-493 and stays centered. Shorter hooks shrink to the visible text plus reference padding instead of carrying dead white space. In source space, use bundled TikTok Sans Bold at 34px, near-black text at RGB 22/22/22, 40px emoji raised 5px above the text visual top, white-card y=223, visual text y=237, 21px text inset, a 548px source-space text line cap, a 10px two-line gap, visual text width plus roughly 46px card padding, a 587px source-space max card width, a 330px source-space minimum card width, and a 14px card radius. After upscale, apply the top-anchored 5.2% visible-card vertical stretch; do not apply the old half-resolution bicubic softening pass, because it makes the glyph edges lighter and mushier than the TikTok reference. This lands around 51px text, 60px emoji, text y=358, a 15px gap, and a white-card fill whose decoded bbox matches the reference instead of being padded by shadow pixels. The 548px line cap is required so live hooks do not crowd the right card edge. TikTok Sans SemiBold, Avenir Next Demi Bold, and SFNS Semibold are fallbacks for machines without the bundled bold font; Arial Bold is emergency fallback only. Do not regress to native-1080 Arial, the old small pill-style TikTok ExtraBold overlay, the old 48px fallback, tiny pill cards, dead-space cards, over-softened glyph edges, compressed card/text height, shadow-measured green checks, or loose vertical padding inside the white card.
 - The top hook copy should read like a native human setup card: streamer/person + situation + tension. Avoid stiff report language like "messy detail," "story somehow turned," "proof," "review," or "selected feeder."
 - Top-card parity proof must come from `script/audit_top_card_reference.py` plus `script/audit_live_top_cards.py --refresh`; do not rely on sidecar text or regenerated overlays without decoded `review.mp4` frames.
@@ -289,7 +294,7 @@ Current renderer rules:
 - Ensemble-consensus captions must still receive the render-time visual/audio delay. Do not bypass `apply_caption_audio_sync_delay()` just because multiple transcription models agree.
 - Suspicious long word spans must be capped near the word end before caption grouping, otherwise subtitles can appear early while still passing naive sidecar checks.
 - Big pauses between words must split caption groups. Do not join words across silence just to satisfy the two-word preference.
-- One-vote and high-spread timing beats should be dropped or rejected for revision, not forced into a render.
+- One-vote and high-spread timing beats should be dropped, rebuilt, or killed with learning notes, not forced into a render.
 - The verifier must pass `script/verify_burned_in_captions.py`; sidecar text alone does not prove visible subtitles.
 - Any future caption timing changes must be validated against video pixels and audio, not just JSON.
 
@@ -350,7 +355,7 @@ Important endpoints:
 
 Important artifacts:
 
-- `artifacts/desktop-qa/manifest.json`
+- `artifacts/web-qa/manifest.json`
 - `artifacts/review-kit-audit/latest.json`
 - `artifacts/review-kit-audit/burned-caption-verification.json`
 - `artifacts/review-kit-audit/streamer-composition-verification.json`
@@ -376,7 +381,7 @@ Keep out of git:
 
 You may use `./script/package_codex_handoff.sh` only as a private offline source snapshot fallback. The normal workflow is to work from this GitHub clone.
 
-Developer ID signing and notarization matter only for distributing a prebuilt `.app` to normal Mac users. They are not required for a Codex/Hermes source-build clone.
+Developer ID signing and notarization are no longer part of this repo's supported lane. The product handoff is a source-build local web cockpit plus backend/Hermes scripts.
 
 ## Operating Checklist
 

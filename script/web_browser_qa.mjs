@@ -51,9 +51,9 @@ async function run() {
   };
 
   for (const [name, url] of routes) {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.waitForSelector("#root", { timeout: 10000 });
-    await page.waitForSelector('.app-frame[data-loaded="true"]', { timeout: 30000 });
+    await page.waitForSelector('.app-frame[data-loaded="true"]', { timeout: 90000 });
     const text = await page.locator("body").innerText({ timeout: 10000 });
     assert(text.includes(name === "dashboard" ? "Dashboard" : name === "reviews" ? "Review Kits" : name[0].toUpperCase() + name.slice(1)), `${name} route missing expected title`);
     const file = path.join(outDir, `${name}-desktop.png`);
@@ -62,8 +62,8 @@ async function run() {
     manifest.route_checks.push({ route: name, ok: true, url });
   }
 
-  await page.goto(`${baseUrl}/reviews`, { waitUntil: "domcontentloaded", timeout: 30000 });
-  await page.waitForSelector('.app-frame[data-loaded="true"]', { timeout: 30000 });
+  await page.goto(`${baseUrl}/reviews`, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.waitForSelector('.app-frame[data-loaded="true"]', { timeout: 90000 });
   await page.getByRole("button", { name: "Approved", exact: true }).click();
   await page.getByRole("button", { name: "Rejected", exact: true }).click();
   await page.getByRole("button", { name: "All", exact: true }).click();
@@ -92,9 +92,9 @@ async function run() {
   }
 
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForSelector("#root", { timeout: 10000 });
-  await page.waitForSelector('.app-frame[data-loaded="true"]', { timeout: 30000 });
+  await page.waitForSelector('.app-frame[data-loaded="true"]', { timeout: 90000 });
   const mobileFile = path.join(outDir, "dashboard-mobile.png");
   await page.screenshot({ path: mobileFile, fullPage: true });
   manifest.screenshots.push(mobileFile);

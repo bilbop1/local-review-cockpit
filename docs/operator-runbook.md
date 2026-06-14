@@ -4,7 +4,7 @@
 
 1. Run `./script/install_backend_launch_agent.sh`.
 2. Run `./script/build_and_run.sh --verify`.
-3. Open `http://127.0.0.1:8765/app` and confirm Settings shows local readiness red/yellow until every review and source gate has fresh proof.
+3. Open the app and confirm Settings shows local readiness red/yellow until every review and source gate has fresh proof.
 
 ## Daily Workflow
 
@@ -12,7 +12,7 @@
 2. Use Campaigns to refresh the current active streamer-first project set: YourRAGE, PlaqueBoyMax, JasonTheWeen.
 3. Use Sources only for advanced API checks, watchlist candidates, and future creator campaigns.
 4. Keep demo/local proof kits out of the production Review Kits surface; build campaign review kits only after source provenance and local media are stored.
-5. Review videos in Review Kits; approval enables publish prep only, and live posting still needs provider readiness, completed warm-up, and final confirmation.
+5. Review videos in Review Kits; approval auto-creates publish prep and schedules a dry-run into the next future `:14` slot. Live posting still requires provider readiness plus final confirmation.
 
 ## Hard Stops
 

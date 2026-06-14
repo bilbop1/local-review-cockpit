@@ -26,7 +26,7 @@ from .renderer import create_demo_kits, create_selected_feeder_kits, validate_vi
 
 HOST = "127.0.0.1"
 PORT = 8765
-API_VERSION = "2026-06-11-web-cockpit-01"
+API_VERSION = "2026-06-14-approval-slots-04"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEB_DIST_DIR = REPO_ROOT / "web" / "dist"
 DIAGNOSTIC_SECRET_PATTERNS = [
@@ -133,6 +133,15 @@ def _hermes_profile_from_status(text: str) -> str:
     return db.DEFAULT_HERMES_PROFILE
 
 
+def _hermes_field_from_status(text: str, field: str) -> str:
+    wanted = field.strip().lower()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith(f"{wanted}:"):
+            return stripped.split(":", 1)[1].strip()
+    return ""
+
+
 def _cron_lines(text: str) -> List[str]:
     lines: List[str] = []
     current = ""
@@ -152,18 +161,34 @@ def _cron_lines(text: str) -> List[str]:
 
 def hermes_runtime_state() -> Dict[str, Any]:
     available = bool(command_path("hermes"))
-    status_result = _run_hermes(["status"], timeout=8) if available else {"ok": False, "stdout": "", "stderr": "missing"}
-    cron_result = _run_hermes(["cron", "list"], timeout=8) if available else {"ok": False, "stdout": "", "stderr": "missing"}
+    selected_profile = db.hermes_profile()
+    status_args = ["status"] if selected_profile == "default" else ["-p", selected_profile, "status"]
+    status_result = _run_hermes(status_args, timeout=2) if available else {"ok": False, "stdout": "", "stderr": "missing"}
+    cron_result = _run_hermes(["cron", "list"], timeout=2) if available else {"ok": False, "stdout": "", "stderr": "missing"}
     combined = f"{status_result.get('stdout', '')}\n{status_result.get('stderr', '')}\n{cron_result.get('stdout', '')}\n{cron_result.get('stderr', '')}"
     lower = combined.lower()
     degraded_auth = any(token in lower for token in ["401", "token invalidated", "invalid_grant", "unauthorized"])
     gateway = launchctl_running("ai.hermes.gateway")
-    selected_profile = db.hermes_profile()
     detected_profile = _hermes_profile_from_status(str(status_result.get("stdout", "")))
+    provider = _hermes_field_from_status(str(status_result.get("stdout", "")), "Provider")
+    model = _hermes_field_from_status(str(status_result.get("stdout", "")), "Model")
+    cron_job_details = db.clipping_hermes_cron_jobs()
+    cron_jobs = db.cron_job_summary_lines(cron_job_details) or _cron_lines(str(cron_result.get("stdout", "")))
+    minimax = db.minimax_hermes_status(
+        selected_profile=selected_profile,
+        provider=provider,
+        model=model,
+        cron_jobs=cron_job_details,
+        available=available and bool(status_result.get("ok", False)),
+        auth_degraded=degraded_auth,
+        api_key_configured=db.minimax_profile_key_configured(selected_profile),
+    )
     if not available:
         state = "unavailable"
     elif degraded_auth:
         state = "degraded_auth"
+    elif not bool(status_result.get("ok", False)):
+        state = "profile_blocked"
     elif not gateway:
         state = "gateway_blocked"
     elif not cron_result.get("ok", False):
@@ -177,10 +202,14 @@ def hermes_runtime_state() -> Dict[str, Any]:
         "status": state,
         "selected_profile": selected_profile,
         "detected_profile": detected_profile,
+        "provider": provider,
+        "model": model,
+        "minimax": minimax,
         "profile_source": "backend system_settings",
         "auth_degraded": degraded_auth,
         "cron_ok": bool(cron_result.get("ok", False)),
-        "cron_jobs": _cron_lines(str(cron_result.get("stdout", ""))),
+        "cron_jobs": cron_jobs,
+        "cron_job_details": cron_job_details,
         "latest_execution_proof": proof,
         "worker_mode": "Hermes agent prompts plus no-agent deterministic scripts",
         "normal_path": "GUI queues job intents; Hermes claims jobs; backend records results.",
@@ -228,8 +257,7 @@ def health() -> Dict[str, Any]:
     gate = db.latest_campaign_gate()
     local_demo_status = "degraded" if blockers else "ready"
     campaign_status = "ready" if gate.get("status") == "qualified" else "blocked"
-    readiness = db.readiness_report()
-    production_green = readiness.get("overall") == "green"
+    production_green = bool(db.three_campaign_review_batch_status().get("ready"))
     publish = publishing.publish_status()
     return {
         "api_version": API_VERSION,
@@ -286,13 +314,14 @@ def workspace_profile() -> Dict[str, Any]:
 
 def distribution_state() -> Dict[str, Any]:
     repo_root = Path(__file__).resolve().parents[2]
-    verify_path = repo_root / "artifacts" / "distribution" / "release-verify.json"
+    verify_path = repo_root / "artifacts" / "handoff" / "codex-handoff.json"
     if not verify_path.exists():
         return {
             "status": "missing",
             "customer_ship_ready": False,
             "artifact": str(verify_path),
-            "blocker": "Run script/package_release.sh and script/verify_release.sh.",
+            "mode": "source_build_web",
+            "blocker": "Run script/package_codex_handoff.sh after web/backend verification.",
         }
     try:
         payload = json.loads(verify_path.read_text(encoding="utf-8"))
@@ -301,10 +330,14 @@ def distribution_state() -> Dict[str, Any]:
             "status": "unreadable",
             "customer_ship_ready": False,
             "artifact": str(verify_path),
-            "blocker": f"Release verification artifact is unreadable: {exc}",
+            "mode": "source_build_web",
+            "blocker": f"Source handoff artifact is unreadable: {exc}",
         }
     payload.setdefault("artifact", str(verify_path))
-    payload["status"] = "green" if payload.get("customer_ship_ready") else ("yellow" if payload.get("bundle_ok") else "red")
+    payload["mode"] = "source_build_web"
+    payload["customer_ship_ready"] = bool(payload.get("ok"))
+    payload["status"] = "green" if payload.get("ok") else "red"
+    payload.setdefault("blocker", "" if payload.get("ok") else "Source-build web handoff package is not ready.")
     return payload
 
 
@@ -335,7 +368,7 @@ def export_diagnostics() -> Dict[str, Any]:
     stamp = db.utc_now().replace(":", "").replace("+", "Z")
     archive = diagnostics_dir / f"clipping-ops-diagnostics-{stamp}.zip"
     repo_root = Path(__file__).resolve().parents[2]
-    gui_manifest_path = repo_root / "artifacts" / "desktop-qa" / "manifest.json"
+    gui_manifest_path = repo_root / "artifacts" / "web-qa" / "manifest.json"
     payloads = {
         "health.json": health(),
         "summary.json": summary(),
@@ -360,7 +393,7 @@ def export_diagnostics() -> Dict[str, Any]:
         for name, payload in payloads.items():
             zipped.writestr(name, json.dumps(payload, indent=2))
         if gui_manifest_path.exists():
-            zipped.write(gui_manifest_path, "desktop-qa-manifest.json")
+            zipped.write(gui_manifest_path, "web-qa-manifest.json")
     redaction_ok = True
     redaction_findings: List[str] = []
     with zipfile.ZipFile(archive) as zipped:
@@ -441,14 +474,15 @@ def list_agents() -> Dict[str, Any]:
             },
             {
                 "name": "clip-review",
-                "role": "Risk/readiness/revision reviewer",
+                "role": "Risk/readiness/learning reviewer",
                 "status": profile_status,
-                "can_write": "risk flags, review comments, revision prompts, approval recommendations",
+                "can_write": "risk flags, review comments, learning summaries, approval recommendations",
                 "cannot_do": "legal determinations, live-post confirmation, final risky-action approval",
             },
         ],
         "schedules": [
-            "Twice-daily sweeps per selected feeder after campaign gate passes.",
+            "Fresh clip scheduler tick every 15 minutes.",
+            "One review kit per active campaign every 3 hours, capped at 24/day total.",
             "Daily brief once clips/jobs exist.",
             "Immediate alert for job failure, rule drift, missing credential, or blocked review kit.",
         ],
@@ -457,9 +491,13 @@ def list_agents() -> Dict[str, Any]:
         "status": hermes["status"],
         "selected_profile": hermes["selected_profile"],
         "detected_profile": hermes["detected_profile"],
+        "provider": hermes["provider"],
+        "model": hermes["model"],
+        "minimax": hermes["minimax"],
         "auth_degraded": hermes["auth_degraded"],
         "cron_ok": hermes["cron_ok"],
         "cron_jobs": hermes["cron_jobs"],
+        "cron_job_details": hermes.get("cron_job_details", []),
         "latest_execution_proof": hermes["latest_execution_proof"],
         "normal_path": hermes["normal_path"],
         "fallback_path": hermes["fallback_path"],
@@ -553,7 +591,12 @@ def refresh_campaign_project(slug: str) -> Dict[str, Any]:
     return {"status": "succeeded", "project": db.campaign_project_progress(normalized), "evidence": evidence}
 
 
-def discover_campaign_sources(slug: str) -> Dict[str, Any]:
+def discover_campaign_sources(
+    slug: str,
+    *,
+    freshness_ladder_hours: List[int] | None = None,
+    quota_recovery: bool = False,
+) -> Dict[str, Any]:
     normalized = db.normalize_campaign_slug(slug)
     if not normalized:
         return {"status": "not_found", "slug": slug, "created": [], "blocker": "Unknown campaign project."}
@@ -577,8 +620,13 @@ def discover_campaign_sources(slug: str) -> Dict[str, Any]:
             status = "blocked"
         else:
             broadcaster_id = str(data[0].get("id", ""))
-            started_at = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat(timespec="seconds").replace("+00:00", "Z")
-            clips = platforms.twitch_get("clips", {"broadcaster_id": broadcaster_id, "first": 20, "started_at": started_at})
+            ladder = freshness_ladder_hours or list(db.FRESHNESS_LADDER_HOURS)
+            if quota_recovery:
+                clips = platforms.twitch_clip_supply_windows(broadcaster_id, lookback_days=35)
+                clips["selected_window_hours"] = 24 * int(clips.get("lookback_days", 35) or 35)
+                clips["freshness_ladder_hours"] = list(ladder)
+            else:
+                clips = platforms.twitch_fresh_clip_supply_ladder(broadcaster_id, min_candidates=1, freshness_ladder_hours=ladder)
             flag = f"selected_feeder_{normalized}"
             if normalized == "yourrage":
                 flag = "selected_feeder_yourrage"
@@ -593,14 +641,19 @@ def discover_campaign_sources(slug: str) -> Dict[str, Any]:
                     "availability_status": "reachable",
                     "latest_check_id": users.get("check_id", ""),
                     "risk_flags": [flag, f"campaign_project_{normalized}", "campaign_rules_stored"],
-                    "notes": "Streamer-first campaign source discovery through Twitch Helix with a 30-day clip lookback. Local media download is still required before rendering.",
+                    "notes": (
+                        "Streamer-first campaign source discovery through Twitch Helix "
+                        f"{'quota recovery 35-day sweep' if quota_recovery else 'freshness ladder'}; "
+                        f"selected window {clips.get('selected_window_hours', 0)}h. "
+                        "Local media download is still required before rendering."
+                    ),
                 }
             )
             for clip_id in stored.get("stored_clip_candidates", []):
                 created.append({"clip_id": clip_id, "source_url": f"https://www.twitch.tv/{handle}", "route_id": route.get("id", ""), "download_required": True})
             status = "succeeded" if created else "blocked"
             if not created:
-                blockers.append(f"No public Twitch clips were returned for {handle} in the 30-day lookback.")
+                blockers.append(f"No public Twitch clips were returned for {handle} in the configured freshness ladder.")
     elif normalized == "kalshi":
         doc_path = _campaign_brief_artifact("kalshi")
         availability_path = _research_artifact_path("kalshi-youtube-source-availability-2026-05-28.json")
@@ -697,7 +750,14 @@ def discover_campaign_sources(slug: str) -> Dict[str, Any]:
     return {"status": status, "project": db.campaign_project_progress(normalized), "created": created, "blockers": blockers}
 
 
-def build_campaign_reviews(slug: str, limit: int = 5, style: str = db.CAMPAIGN_SHORT_PROFILE) -> Dict[str, Any]:
+def build_campaign_reviews(
+    slug: str,
+    limit: int = 5,
+    style: str = db.CAMPAIGN_SHORT_PROFILE,
+    *,
+    quota_recovery: bool = False,
+    hook_candidates_by_clip: Dict[str, List[Dict[str, Any]]] | None = None,
+) -> Dict[str, Any]:
     normalized = db.normalize_campaign_slug(slug)
     if not normalized:
         return {"status": "not_found", "created": [], "blocker": "Unknown campaign project."}
@@ -716,39 +776,66 @@ def build_campaign_reviews(slug: str, limit: int = 5, style: str = db.CAMPAIGN_S
         blocker = f"{progress.get('name', normalized)} has indexed sources, but no verified local source media yet."
         return {"status": "blocked", "created": [], "blocker": blocker}
     script = Path(__file__).resolve().parents[2] / "script" / "build_evidence_review_kit.py"
-    candidates = db.campaign_clips(normalized)
+    candidates = db.review_candidate_order(db.campaign_clips(normalized), normalized, quota_recovery=quota_recovery)
     if not candidates:
         return {"status": "blocked", "created": [], "blocker": f"No {progress.get('name', normalized)} source candidates are indexed."}
     created: List[Dict[str, Any]] = []
     blockers: List[str] = []
+    reviewed_clip_ids = {
+        str(clip_id)
+        for kit in db.campaign_render_kits(normalized)
+        for clip_id in db.production_feeder_kit_status(kit).get("clip_ids", [])
+    }
+    skipped_existing = 0
     for candidate in candidates:
         if len(created) >= max(1, min(limit, db.CAMPAIGN_PROJECT_TARGET)):
             break
-        command = [sys.executable, str(script), "--campaign-slug", normalized, "--clip-id", str(candidate["id"]), "--profile", db.CAMPAIGN_SHORT_PROFILE]
+        candidate_id = str(candidate["id"])
+        if candidate_id in reviewed_clip_ids:
+            skipped_existing += 1
+            continue
+        command = [sys.executable, str(script), "--campaign-slug", normalized, "--clip-id", candidate_id, "--profile", db.CAMPAIGN_SHORT_PROFILE]
+        if quota_recovery:
+            command.append("--quota-recovery")
+        candidate_hooks = (hook_candidates_by_clip or {}).get(candidate_id, [])
+        if candidate_hooks:
+            command.extend(["--hook-candidates-json", json.dumps(candidate_hooks)])
         try:
             result = subprocess.run(command, text=True, capture_output=True, timeout=1800, cwd=str(Path(__file__).resolve().parents[2]))
         except subprocess.TimeoutExpired as exc:
-            blockers.append(f"{candidate['id']}: render timed out: {exc}")
+            blockers.append(f"{candidate_id}: render timed out: {exc}")
             continue
         if result.returncode != 0:
-            blockers.append(f"{candidate['id']}: {(result.stderr or result.stdout)[-1400:]}")
+            blockers.append(f"{candidate_id}: {(result.stderr or result.stdout)[-1400:]}")
             continue
         try:
             payload = json.loads(result.stdout)
         except json.JSONDecodeError:
-            blockers.append(f"{candidate['id']}: campaign review builder returned non-JSON output")
+            blockers.append(f"{candidate_id}: campaign review builder returned non-JSON output")
+            continue
+        if payload.get("status") != "succeeded":
+            blocker_code = str(payload.get("blocker_code", "builder_blocked")).strip()
+            blocker = str(payload.get("blocker", "campaign review builder blocked this candidate")).strip()
+            blockers.append(f"{candidate_id}: {blocker_code}: {blocker}")
             continue
         kit = db.one("SELECT * FROM render_kits WHERE id = ?", (str(payload.get("kit_id", "")),))
         if kit:
             proof = db.production_feeder_kit_status(kit)
             payload["classification"] = proof.get("classification", "red")
-            if payload["classification"] != "green":
-                blockers.append(f"{candidate['id']}: rendered kit failed production proof: {'; '.join(str(item) for item in proof.get('blockers', [])[:4])}")
+            proof_clip_ids = [str(item) for item in proof.get("clip_ids", [])]
+            if any(clip_id in reviewed_clip_ids for clip_id in proof_clip_ids):
+                skipped_existing += 1
                 continue
+            if payload["classification"] != "green":
+                blockers.append(f"{candidate_id}: rendered kit failed production proof: {'; '.join(str(item) for item in proof.get('blockers', [])[:4])}")
+                continue
+            reviewed_clip_ids.update(proof_clip_ids)
         else:
-            blockers.append(f"{candidate['id']}: builder did not create a render kit row")
+            blockers.append(f"{candidate_id}: builder did not create a render kit row")
             continue
         created.append(payload)
+    if skipped_existing and not created:
+        blockers.append(f"Skipped {skipped_existing} clip(s) that already have review kits; use an explicit revision flow to replace old drafts.")
     status = "succeeded" if created else "blocked"
     db.create_job(
         f"{normalized}-campaign-review-build",
@@ -762,6 +849,43 @@ def build_campaign_reviews(slug: str, limit: int = 5, style: str = db.CAMPAIGN_S
     )
     db.log_audit("worker", "build_campaign_reviews", "campaign_project", normalized, status, str(db.render_root()))
     return {"status": status, "project": db.campaign_project_progress(normalized), "created": created, "blockers": blockers[:8], "style": db.CAMPAIGN_SHORT_PROFILE}
+
+
+def scheduled_campaign_review_build(slug: str, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    normalized = db.normalize_campaign_slug(slug)
+    if not normalized:
+        return {"status": "not_found", "blocker": "Unknown campaign project.", "created": []}
+    payload = payload or {}
+    quota_recovery = bool(payload.get("quota_recovery_mode"))
+    freshness_ladder_hours = [int(item) for item in payload.get("freshness_ladder_hours", []) if str(item).strip()] or list(db.FRESHNESS_LADDER_HOURS)
+    discovery = discover_campaign_sources(normalized, freshness_ladder_hours=freshness_ladder_hours, quota_recovery=quota_recovery)
+    if discovery.get("status") not in {"succeeded", "blocked"}:
+        return {**discovery, "created": []}
+    raw_hook_candidates = payload.get("hook_candidates_by_clip", {})
+    hook_candidates_by_clip = raw_hook_candidates if isinstance(raw_hook_candidates, dict) else {}
+    result = build_campaign_reviews(
+        normalized,
+        limit=1,
+        style=db.CAMPAIGN_SHORT_PROFILE,
+        quota_recovery=quota_recovery,
+        hook_candidates_by_clip=hook_candidates_by_clip,
+    )
+    result["schedule_payload"] = payload
+    result["freshness_ladder_hours"] = freshness_ladder_hours
+    result["quota_recovery_mode"] = quota_recovery
+    result["quota_recovery_policy"] = db.quota_recovery_policy(quota_recovery)
+    result["learning_context"] = db.learning_context_for_campaign(normalized, limit=8)
+    if result.get("status") == "succeeded":
+        db.log_audit("hermes-dispatcher", "scheduled_campaign_review_build", "campaign_project", normalized, "succeeded", json.dumps(result)[:800])
+    return result
+
+
+def reject_review_kit(kit_id: str, notes: str, tags: List[str] | None = None) -> Dict[str, Any]:
+    signal = db.record_review_learning_signal(kit_id, notes, reason_tags=tags or [])
+    kit = db.one("SELECT * FROM render_kits WHERE id = ?", (kit_id,))
+    payload = dict(kit or {})
+    payload["learning_signal"] = signal
+    return payload
 
 
 def run_campaign_gate() -> Dict[str, Any]:
@@ -1093,9 +1217,16 @@ class Handler(BaseHTTPRequestHandler):
                 query = parse_qs(urlparse(self.path).query)
                 status = (query.get("status") or [""])[0]
                 limit = int((query.get("limit") or ["100"])[0] or "100")
-                self.send_json(db.visible_jobs(limit=max(1, min(limit, 250)), status=status))
+                compact = str((query.get("compact") or [""])[0]).lower() in {"1", "true", "yes"}
+                self.send_json(db.visible_jobs(limit=max(1, min(limit, 250)), status=status, compact=compact))
             elif path == "/api/review-kits":
                 self.send_json(db.visible_render_kits())
+            elif path == "/api/review-schedule":
+                self.send_json(db.review_schedule_status())
+            elif path == "/api/review-learning":
+                query = parse_qs(urlparse(self.path).query)
+                slug = (query.get("campaign_slug") or [""])[0]
+                self.send_json(db.review_learning_signals(slug))
             elif path == "/api/campaign-evidence":
                 self.send_json(db.rows("SELECT * FROM campaign_evidence ORDER BY captured_at DESC"))
             elif path == "/api/source-routes":
@@ -1158,7 +1289,38 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         try:
             path = urlparse(self.path).path
-            if path == "/api/jobs":
+            if path == "/api/review-schedule/tick":
+                body = self.read_body()
+                result = db.review_schedule_tick(
+                    require_campaign_ready=not bool(body.get("ignore_campaign_blockers", False)),
+                    force_due=bool(body.get("force_due", False)),
+                )
+                self.send_json(result, HTTPStatus.OK)
+            elif path.startswith("/api/review-schedule/") and (path.endswith("/pause") or path.endswith("/resume")):
+                parts = [part for part in path.split("/") if part]
+                if len(parts) != 4:
+                    self.send_json({"error": "not_found", "path": path}, HTTPStatus.NOT_FOUND)
+                    return
+                slug = db.normalize_campaign_slug(parts[2])
+                if not slug:
+                    self.send_json({"error": "unknown_campaign"}, HTTPStatus.NOT_FOUND)
+                    return
+                enabled = 0 if parts[3] == "pause" else 1
+                db.execute("UPDATE review_schedule SET enabled=?, updated_at=? WHERE campaign_slug=?", (enabled, db.utc_now(), slug))
+                db.log_audit("user", f"review_schedule_{parts[3]}", "review_schedule", slug, "stored", "api")
+                self.send_json(db.review_schedule_status(), HTTPStatus.OK)
+            elif path == "/api/review-learning/summarize":
+                signals = db.review_learning_signals(limit=250)
+                by_campaign: Dict[str, Dict[str, Any]] = {}
+                for signal in signals:
+                    slug = str(signal.get("campaign_slug", "unknown") or "unknown")
+                    row = by_campaign.setdefault(slug, {"campaign_slug": slug, "count": 0, "tags": {}, "notes": []})
+                    row["count"] += 1
+                    row["notes"].append(str(signal.get("notes", ""))[:240])
+                    for tag in signal.get("reason_tags", []):
+                        row["tags"][tag] = row["tags"].get(tag, 0) + 1
+                self.send_json({"status": "succeeded", "campaigns": list(by_campaign.values())}, HTTPStatus.OK)
+            elif path == "/api/jobs":
                 body = self.read_body()
                 job = db.create_job_intent(
                     str(body.get("intent", "")),
@@ -1244,6 +1406,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(publishing.set_publish_settings(self.read_body()))
                 except publishing.PublishError as exc:
                     self.send_json({"error": exc.code, "detail": exc.detail}, HTTPStatus.CONFLICT)
+            elif path == "/api/publish/schedule/tick":
+                self.send_json(publishing.publish_schedule_tick(requested_by="api"))
             elif path == "/api/publish/jobs":
                 try:
                     self.send_json(publishing.create_publish_job(self.read_body()), HTTPStatus.OK)
@@ -1367,21 +1531,27 @@ class Handler(BaseHTTPRequestHandler):
                     (next_status, db.utc_now(), kit_id),
                 )
                 db.log_audit("user", "approve_review_kit", "render_kit", kit_id, f"{next_status}; {detail}", "api")
-                self.send_json(db.one("SELECT * FROM render_kits WHERE id = ?", (kit_id,)))
+                auto_slot = None
+                if not is_demo:
+                    try:
+                        auto_slot = publishing.schedule_approved_kit(kit_id, requested_by="approval-api")
+                    except publishing.PublishError as exc:
+                        db.log_audit("system", "auto_slot_publish_failed", "render_kit", kit_id, exc.code, exc.detail[:800])
+                        self.send_json({"error": exc.code, "detail": exc.detail, "kit_id": kit_id}, HTTPStatus.CONFLICT)
+                        return
+                updated = db.one("SELECT * FROM render_kits WHERE id = ?", (kit_id,))
+                response = db.enrich_render_kit_with_clip_metadata(updated, verify_video=False) if updated else {}
+                response["publish_auto_slot"] = auto_slot
+                self.send_json(response)
             elif path.startswith("/api/review-kits/") and path.endswith("/reject"):
                 kit_id = path.split("/")[3]
                 body = self.read_body()
                 notes = str(body.get("notes", "")).strip()
                 if not notes:
-                    self.send_json({"error": "notes_required", "detail": "Rejecting a kit requires notes for revision."}, HTTPStatus.CONFLICT)
+                    self.send_json({"error": "notes_required", "detail": "Killing a kit requires notes so Hermes can learn what to avoid."}, HTTPStatus.CONFLICT)
                     return
-                db.execute(
-                    "UPDATE render_kits SET review_status='rejected_revision_requested', rejection_notes=? WHERE id=?",
-                    (notes, kit_id),
-                )
-                db.create_job("review-kit-revision", "revision", "blocked", "awaiting-revision-agent", 20, logs=notes)
-                db.log_audit("user", "reject_review_kit", "render_kit", kit_id, "revision requested", notes)
-                self.send_json(db.one("SELECT * FROM render_kits WHERE id = ?", (kit_id,)))
+                tags = body.get("reason_tags") if isinstance(body.get("reason_tags"), list) else []
+                self.send_json(reject_review_kit(kit_id, notes, tags=[str(tag) for tag in tags]))
             else:
                 self.send_json({"error": "not_found", "path": path}, HTTPStatus.NOT_FOUND)
         except Exception as exc:

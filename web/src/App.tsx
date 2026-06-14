@@ -35,11 +35,12 @@ import type {
   PublishStatus,
   ReadinessPayload,
   RenderKit,
+  ReviewSchedule,
   SummaryPayload
 } from "./types";
 
 type Route = "dashboard" | "reviews" | "campaigns" | "readiness" | "settings" | "advanced";
-type KitFilter = "needs" | "approved" | "rejected" | "all";
+type KitFilter = "today" | "needs" | "approved" | "rejected" | "all";
 type PlatformOverlay = "off" | "ig" | "tt" | "yt";
 
 const routeLabels: Record<Route, string> = {
@@ -76,7 +77,7 @@ function statusTone(value?: string | boolean): "green" | "yellow" | "red" | "gre
   if (value === false) return "red";
   const text = String(value || "").toLowerCase();
   if (["green", "ready", "succeeded", "qualified", "ok", "approved_manual_prep", "demo_reviewed"].some((token) => text.includes(token))) return "green";
-  if (["yellow", "queued", "running", "needs_review", "blocked", "degraded", "monitor"].some((token) => text.includes(token))) return "yellow";
+  if (["yellow", "queued", "scheduled", "running", "needs_review", "blocked", "degraded", "monitor"].some((token) => text.includes(token))) return "yellow";
   if (["red", "failed", "missing", "rejected", "error", "unavailable"].some((token) => text.includes(token))) return "red";
   return "grey";
 }
@@ -108,7 +109,7 @@ function compactNumber(value?: number): string {
 
 function reviewStatusLabel(status?: string): string {
   if (status === "approved_manual_prep" || status === "demo_reviewed") return "Approved";
-  if (status?.includes("rejected")) return "Needs Revision";
+  if (status?.includes("rejected")) return "Killed for Learning";
   return "Needs Review";
 }
 
@@ -121,21 +122,34 @@ function sortKitTime(kit: RenderKit): number {
 function kitMatchesFilter(kit: RenderKit, filter: KitFilter): boolean {
   const status = kit.review_status || "";
   if (filter === "all") return true;
+  if (filter === "today") {
+    const rendered = kit.rendered_at || kit.created_at || "";
+    return rendered ? new Date(rendered).toDateString() === new Date().toDateString() : false;
+  }
   if (filter === "approved") return status === "approved_manual_prep" || status === "demo_reviewed";
   if (filter === "rejected") return status.includes("rejected");
   return !kitMatchesFilter(kit, "approved") && !kitMatchesFilter(kit, "rejected");
 }
 
 async function fetchFastCore(signal?: AbortSignal): Promise<Partial<AppData>> {
-  const [summary, projects, kits, agents, publish, auth] = await Promise.all([
+  const [summary, projects, kits, agents, publish, auth, schedule] = await Promise.all([
     apiGet<SummaryPayload>("/api/summary", signal),
     apiGet<CampaignProject[]>("/api/campaign-projects", signal),
     apiGet<RenderKit[]>("/api/review-kits", signal),
     apiGet<AgentsPayload>("/api/agents", signal),
     apiGet<PublishStatus>("/api/publish/status", signal),
-    apiGet<AuthStatus>("/api/auth/status", signal)
+    apiGet<AuthStatus>("/api/auth/status", signal),
+    apiGet<ReviewSchedule>("/api/review-schedule", signal)
   ]);
-  return { summary, projects, kits, agents, publish, auth };
+  return { summary, projects, kits, agents, publish, auth, schedule };
+}
+
+async function fetchReviewCore(signal?: AbortSignal): Promise<Partial<AppData>> {
+  const [kits, publish] = await Promise.all([
+    apiGet<RenderKit[]>("/api/review-kits", signal),
+    apiGet<PublishStatus>("/api/publish/status", signal)
+  ]);
+  return { kits, publish };
 }
 
 async function fetchProofCore(signal?: AbortSignal): Promise<Partial<AppData>> {
@@ -147,7 +161,7 @@ async function fetchProofCore(signal?: AbortSignal): Promise<Partial<AppData>> {
 }
 
 async function fetchJobs(signal?: AbortSignal): Promise<JobRecord[]> {
-  return apiGet<JobRecord[]>("/api/jobs?limit=80", signal);
+  return apiGet<JobRecord[]>("/api/jobs?limit=20&compact=1", signal);
 }
 
 function AppShell({
@@ -167,7 +181,8 @@ function AppShell({
   refresh: () => void;
   children: React.ReactNode;
 }) {
-  const hermesTone = statusTone(data.agents?.status);
+  const hermesTone = statusTone(data.agents?.minimax?.status || data.agents?.status);
+  const hermesDetail = data.agents?.minimax?.ready ? `MiniMax ${data.agents?.model || ""}`.trim() : (data.agents?.minimax?.status || data.agents?.status || "checking");
   const publishReady = data.publish?.provider?.live_ready === true;
   const fastBackendOnline = Boolean(data.summary || data.kits.length || data.projects.length || data.jobs.length);
   return (
@@ -212,7 +227,7 @@ function AppShell({
           </div>
           <div className="topbar-actions">
             <StatusChip icon={<HeartPulse size={16} />} tone={fastBackendOnline ? "green" : "grey"} label="Backend" detail={fastBackendOnline ? "online" : "checking"} />
-            <StatusChip icon={<Bot size={16} />} tone={hermesTone} label="Hermes" detail={data.agents?.status || "checking"} />
+            <StatusChip icon={<Bot size={16} />} tone={hermesTone} label="Hermes" detail={hermesDetail} />
             <StatusChip icon={publishReady ? <UploadCloud size={16} /> : <Lock size={16} />} tone={publishReady ? "green" : "yellow"} label="Publish" detail={publishReady ? "live ready" : "locked"} />
             <button className="icon-button" onClick={refresh} aria-label="Refresh cockpit data">
               {loading ? <Loader2 className="spin" size={18} /> : <RefreshCw size={18} />}
@@ -256,16 +271,22 @@ function Dashboard({ data, action }: { data: AppData; action: (intent: string, p
   const latest = data.kits[0];
   const projectsReady = data.projects.filter((project) => statusTone(project.status || project.blocker) === "green").length;
   const subtitleProof = data.kits.some((kit) => kit.campaign_proof_status === "green");
-  const customerBlocker = data.readiness?.milestones?.customer_ship_ready?.blockers?.[0] || "Source build repo. Prebuilt app notarization is legacy-only.";
+  const schedule = data.schedule;
+  const nextDue = [...(schedule?.campaigns || [])].filter((item) => item.enabled).sort((a, b) => Date.parse(a.next_due_at || "") - Date.parse(b.next_due_at || ""))[0];
+  const minimax = data.agents?.minimax;
   return (
     <div className="page-stack">
       <section className="stat-grid">
-        <StatCard label="Reviews Waiting" value={counts.approvals_needed ?? data.kits.length} detail="Kits needing a human decision" tone={(counts.approvals_needed || 0) > 0 ? "yellow" : "green"} icon={<Play />} />
+        <StatCard label="Generated Today" value={`${schedule?.generated_today ?? 0}/${schedule?.daily_cap ?? 24}`} detail="Fresh scheduled review kits" tone={(schedule?.generated_today || 0) >= (schedule?.daily_cap || 24) ? "green" : "yellow"} icon={<Gauge />} />
+        <StatCard label="Reviews Waiting" value={schedule?.needs_review_backlog ?? counts.approvals_needed ?? data.kits.length} detail="Kits needing a human decision" tone={(counts.approvals_needed || 0) > 0 ? "yellow" : "green"} icon={<Play />} />
+        <StatCard label="Approved Today" value={schedule?.approved_today ?? 0} detail="Human-approved for prep only" tone={(schedule?.approved_today || 0) >= 12 ? "green" : "yellow"} icon={<CheckCircle2 />} />
+        <StatCard label="Killed Today" value={schedule?.rejected_today ?? 0} detail="Negative notes feeding future picks" tone={(schedule?.rejected_today || 0) ? "green" : "grey"} icon={<XCircle />} />
         <StatCard label="Latest Rendered" value={latest ? formatDate(latest.rendered_at || latest.created_at) : "None"} detail={latest?.title || "No review kits visible yet"} tone={latest ? "green" : "yellow"} icon={<Clock3 />} />
+        <StatCard label="Next Due" value={nextDue?.campaign_name || "Waiting"} detail={nextDue?.next_due_at ? formatDate(nextDue.next_due_at, "full") : "Scheduler has not queued yet"} tone={nextDue ? "yellow" : "grey"} icon={<Clock3 />} />
+        <StatCard label="MiniMax Hermes" value={minimax?.status || "checking"} detail={`${data.agents?.selected_profile || "profile missing"} · ${data.agents?.model || "model missing"}`} tone={statusTone(minimax?.status)} icon={<Bot />} />
         <StatCard label="Campaign Status" value={`${projectsReady}/${data.projects.length || 0}`} detail="Projects with enough evidence to move" tone={projectsReady > 0 ? "green" : "yellow"} icon={<Sparkles />} />
         <StatCard label="Subtitle Proof" value={subtitleProof ? "Present" : "Needs proof"} detail="Review videos must have visible burned-in captions" tone={subtitleProof ? "green" : "yellow"} icon={<CheckCircle2 />} />
         <StatCard label="Publish Lock" value={data.publish?.provider?.live_ready ? "Open" : "Locked"} detail="Live posting requires key, warm-up, approval, dry-run, confirmation" tone={data.publish?.provider?.live_ready ? "green" : "yellow"} icon={<Lock />} />
-        <StatCard label="Customer Ship" value={data.readiness?.milestones?.customer_ship_ready?.status || "Source build"} detail={customerBlocker} tone={statusTone(data.readiness?.milestones?.customer_ship_ready?.status)} icon={<Archive />} />
       </section>
       <section className="action-band">
         <div>
@@ -310,12 +331,13 @@ function JobStrip({ jobs }: { jobs: JobRecord[] }) {
 }
 
 function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<void> }) {
-  const [filter, setFilter] = useState<KitFilter>("all");
+  const [filter, setFilter] = useState<KitFilter>("today");
   const [campaign, setCampaign] = useState("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string>("");
   const [overlay, setOverlay] = useState<PlatformOverlay>("off");
   const [rejectNote, setRejectNote] = useState("");
+  const [rejectTags, setRejectTags] = useState<string[]>([]);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -335,6 +357,7 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
     if (selected?.id) {
       setSelectedId(selected.id);
       setRejectNote("");
+      setRejectTags([]);
       setError("");
     }
   }, [selected?.id]);
@@ -368,7 +391,7 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
     setBusy("reject");
     setError("");
     try {
-      await apiPost(`/api/review-kits/${selected.id}/reject`, { notes: rejectNote });
+      await apiPost(`/api/review-kits/${selected.id}/reject`, { notes: rejectNote, reason_tags: rejectTags });
       await refresh();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -415,7 +438,20 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
     }
   }
 
-  const campaigns = data.projects.filter((project) => data.kits.some((kit) => kit.campaign_slug === project.slug));
+  const campaigns = useMemo(() => {
+    const bySlug = new Map(data.projects.map((project) => [project.slug, project]));
+    for (const kit of data.kits) {
+      const slug = kit.campaign_slug || "";
+      if (slug && !bySlug.has(slug)) {
+        bySlug.set(slug, {
+          slug,
+          name: kit.campaign_name || slug,
+          campaign_url: kit.campaign_url || ""
+        } as CampaignProject);
+      }
+    }
+    return [...bySlug.values()].filter((project) => data.kits.some((kit) => kit.campaign_slug === project.slug));
+  }, [data.projects, data.kits]);
   return (
     <div className="reviews-layout">
       <section className="review-list-panel">
@@ -427,9 +463,9 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
           <Pill tone="grey" label={`${filtered.length} shown`} />
         </div>
         <div className="filter-row">
-          {(["needs", "approved", "rejected", "all"] as KitFilter[]).map((item) => (
+          {(["today", "needs", "approved", "rejected", "all"] as KitFilter[]).map((item) => (
             <button key={item} className={filter === item ? "seg active" : "seg"} onClick={() => setFilter(item)}>
-              {item === "needs" ? "Needs Review" : item[0].toUpperCase() + item.slice(1)}
+              {item === "needs" ? "Needs Review" : item === "today" ? "Today" : item[0].toUpperCase() + item.slice(1)}
             </button>
           ))}
         </div>
@@ -459,10 +495,11 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
                 <span><Sparkles size={14} /> Created {formatDate(kit.created_at)}</span>
                 <span><Film size={14} /> Rendered {formatDate(kit.rendered_at)}</span>
                 <span><Activity size={14} /> {formatDuration(kit.clip_duration)} · {compactNumber(kit.clip_view_count)} views</span>
+                {kit.publish_scheduled_at && <span><Send size={14} /> Slot {formatDate(kit.publish_scheduled_at)}</span>}
               </div>
               <div className="kit-row-footer">
                 <span>{kit.campaign_name || "Campaign"}</span>
-                <span>{kit.clip_source_platform || "Source"}</span>
+                <span>{kit.publish_status ? `Publish ${kit.publish_status}` : (kit.clip_source_platform || "Source")}</span>
               </div>
             </button>
           ))}
@@ -502,20 +539,21 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
                 muted
                 playsInline
                 preload="metadata"
-                src={reviewVideoUrl(selected.id)}
+                src={`${reviewVideoUrl(selected.id)}?v=${encodeURIComponent(selected.rendered_at || selected.created_at || selected.id)}`}
               />
               <PlatformChrome overlay={overlay} />
             </div>
             <div className="decision-panel">
               <div>
                 <h3>Decision</h3>
-                <p>Approval prepares files only. It does not publish.</p>
+                <p>Approval auto-slots a dry-run package. It does not live post.</p>
               </div>
               <div className="decision-actions">
-                <button className="primary" onClick={approve} disabled={!!busy}><CheckCircle2 size={16} /> {busy === "approve" ? "Approving" : "Approve for Prep"}</button>
-                <input value={rejectNote} onChange={(event) => setRejectNote(event.target.value)} placeholder="Revision note required" />
-                <button onClick={reject} disabled={!!busy || !rejectNote.trim()}><XCircle size={16} /> Send Back</button>
+                <button className="primary" onClick={approve} disabled={!!busy}><CheckCircle2 size={16} /> {busy === "approve" ? "Approving" : "Approve + Slot"}</button>
+                <input value={rejectNote} onChange={(event) => setRejectNote(event.target.value)} placeholder="Kill note required" />
+                <button onClick={reject} disabled={!!busy || !rejectNote.trim()}><XCircle size={16} /> Kill + Teach</button>
               </div>
+              <ReasonChips selected={rejectTags} onChange={setRejectTags} />
               {error && <p className="inline-error">{error}</p>}
             </div>
             <section className="detail-grid">
@@ -525,13 +563,15 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
               <Info label="Views" value={compactNumber(selected.clip_view_count)} />
               <Info label="Duration" value={formatDuration(selected.clip_duration)} />
               <Info label="Source" value={selected.clip_source_platform || "Unknown"} />
+              <Info label="Publish Slot" value={selected.publish_scheduled_at ? formatDate(selected.publish_scheduled_at, "full") : "Unslotted"} />
+              <Info label="Publish State" value={selected.publish_status || "No job"} />
               {selected.clip_source_url && (
                 <a className="source-link" href={selected.clip_source_url} target="_blank" rel="noreferrer">
                   Source Link <ExternalLink size={14} />
                 </a>
               )}
             </section>
-            <PublishPanel status={data.publish} approved={kitMatchesFilter(selected, "approved")} busy={busy} onPrepare={preparePublish} onDryRun={dryRunPublish} />
+            <PublishPanel kit={selected} status={data.publish} approved={kitMatchesFilter(selected, "approved")} busy={busy} onPrepare={preparePublish} onDryRun={dryRunPublish} />
             <details className="technical">
               <summary>Technical Artifacts <ChevronDown size={15} /></summary>
               <div className="artifact-grid">
@@ -561,21 +601,71 @@ function PlatformChrome({ overlay }: { overlay: PlatformOverlay }) {
   return <div className="platform-chrome tt"><div className="tt-actions">●<br />♡<br />💬<br />↗</div><div className="tt-bottom">TikTok caption/profile zone</div></div>;
 }
 
-function PublishPanel({ status, approved, busy, onPrepare, onDryRun }: { status?: PublishStatus; approved: boolean; busy: string; onPrepare: () => void; onDryRun: () => void }) {
+function ReasonChips({ selected, onChange }: { selected: string[]; onChange: (tags: string[]) => void }) {
+  const reasons = [
+    ["bad_clip_selection", "Bad Pick"],
+    ["weak_hook", "Weak Hook"],
+    ["caption_timing", "Timing"],
+    ["caption_visual_style", "Captions"],
+    ["bad_composition", "Crop"],
+    ["campaign_mismatch", "Campaign Fit"],
+    ["boring_random_moment", "Boring"],
+    ["source_issue", "Source"]
+  ];
+  function toggle(tag: string) {
+    onChange(selected.includes(tag) ? selected.filter((item) => item !== tag) : [...selected, tag]);
+  }
+  return (
+    <div className="reason-chips" aria-label="Learning reason chips">
+      {reasons.map(([tag, label]) => (
+        <button key={tag} type="button" className={selected.includes(tag) ? "chip active" : "chip"} onClick={() => toggle(tag)}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PublishPanel({
+  kit,
+  status,
+  approved,
+  busy,
+  onPrepare,
+  onDryRun
+}: {
+  kit: RenderKit;
+  status?: PublishStatus;
+  approved: boolean;
+  busy: string;
+  onPrepare: () => void;
+  onDryRun: () => void;
+}) {
   const provider = status?.provider;
   const blockers = provider?.blockers || [];
+  const scheduled = kit.publish_scheduled_at;
+  const slotSummary = status?.auto_schedule
+    ? `${status.auto_schedule.slots_per_day || 8}/day at :${String(status.auto_schedule.slot_minute ?? 14).padStart(2, "0")}`
+    : "8/day at :14";
   return (
     <section className="publish-panel">
       <div>
         <p className="eyebrow">Publish lock</p>
-        <h3>{approved ? "Approved kit can be packaged" : "Approve this kit before publish prep"}</h3>
-        <p>Live Upload-Post stays locked until key, warm-up, dry-run proof, live mode, and final confirmation all pass.</p>
+        <h3>{scheduled ? `Auto-slotted ${formatDate(scheduled)}` : approved ? "Approved kit can be slotted" : "Approve this kit before publish prep"}</h3>
+        <p>{scheduled ? `Dry-run package is waiting for its ${slotSummary} slot.` : "Live Upload-Post stays locked until key, warm-up, live mode, and final confirmation pass."}</p>
       </div>
       <div className="publish-controls">
-        <button onClick={onPrepare} disabled={!approved || !!busy}><Send size={16} /> Prepare Post</button>
-        <button onClick={onDryRun} disabled={!approved || !!busy}><ShieldCheck size={16} /> Dry Run</button>
+        <button onClick={onPrepare} disabled={!approved || !!busy}><Send size={16} /> Rebuild Package</button>
+        <button onClick={onDryRun} disabled={!approved || !!busy}><ShieldCheck size={16} /> Dry Run Now</button>
         <button disabled><Lock size={16} /> Post Now</button>
       </div>
+      {kit.publish_status && (
+        <div className="publish-summary">
+          <Pill tone={statusTone(kit.publish_status)} label={kit.publish_status} />
+          <span>{kit.publish_stage || "waiting"}</span>
+          {scheduled && <span>{formatDate(scheduled, "full")}</span>}
+        </div>
+      )}
       <div className="blocker-list">
         {(blockers.length ? blockers : ["Live posting is intentionally locked until the provider is fully ready."]).slice(0, 4).map((blocker) => (
           <span key={blocker}><Lock size={13} /> {blocker}</span>
@@ -600,6 +690,10 @@ function Campaigns({ data, action }: { data: AppData; action: (intent: string, p
       {data.projects.length === 0 && <EmptyState title="No campaign projects" detail="Campaign records will appear once the backend seed data is available." />}
       {data.projects.map((project) => (
         <section className="campaign-card" key={project.slug}>
+          {(() => {
+            const schedule = data.schedule?.campaigns?.find((item) => item.campaign_slug === project.slug);
+            return (
+              <>
           <div className="campaign-card-top">
             <div>
               <p className="eyebrow">Campaign</p>
@@ -612,6 +706,11 @@ function Campaigns({ data, action }: { data: AppData; action: (intent: string, p
             <span>Approved {project.approved_count || 0}/{project.target_count || 5}</span>
             <span>Rendered {project.rendered_count || 0}</span>
           </div>
+          <div className="schedule-line">
+            <span>Today {schedule?.generated_today ?? 0}/{schedule?.daily_cap ?? 8}</span>
+            <span>Every {schedule?.cadence_hours ?? 3}h</span>
+            <span>{schedule?.pending ? "Pending build" : `Next ${formatDate(schedule?.next_due_at)}`}</span>
+          </div>
           <div className="button-row">
             <button onClick={() => action("refresh_campaigns", { campaign_slug: project.slug })}><RefreshCw size={16} /> Refresh Campaign</button>
             <button onClick={() => action("discover_campaign_sources", { campaign_slug: project.slug })}><Search size={16} /> Find Sources</button>
@@ -619,6 +718,9 @@ function Campaigns({ data, action }: { data: AppData; action: (intent: string, p
           </div>
           {project.campaign_url && <a href={project.campaign_url} target="_blank" rel="noreferrer">Open campaign brief <ExternalLink size={14} /></a>}
           {project.blocker && <p className="inline-error">{project.blocker}</p>}
+              </>
+            );
+          })()}
         </section>
       ))}
     </div>
@@ -706,6 +808,22 @@ function SettingsPage({ data, refresh }: { data: AppData; refresh: () => Promise
       <section className="panel">
         <div className="section-heading">
           <div>
+            <p className="eyebrow">MiniMax Hermes</p>
+            <h2>Agent provider</h2>
+          </div>
+          <Pill tone={statusTone(data.agents?.minimax?.status)} label={data.agents?.minimax?.status || "checking"} />
+        </div>
+        <div className="health-list">
+          <div><Pill tone="grey" label="profile" /><strong>Selected</strong><span>{data.agents?.selected_profile || "missing"}</span></div>
+          <div><Pill tone="grey" label="provider" /><strong>Provider</strong><span>{data.agents?.provider || "missing"}</span></div>
+          <div><Pill tone="grey" label="model" /><strong>Model</strong><span>{data.agents?.model || data.agents?.minimax?.expected_model || "MiniMax-M3"}</span></div>
+        </div>
+        <p>Run <code>./script/configure_minimax_hermes_local.sh</code> locally, then <code>./script/verify_minimax_hermes.sh</code>. Keys never go into the repo.</p>
+        {(data.agents?.minimax?.blockers || []).slice(0, 3).map((blocker) => <p className="inline-error" key={blocker}>{blocker}</p>)}
+      </section>
+      <section className="panel">
+        <div className="section-heading">
+          <div>
             <p className="eyebrow">Credentials</p>
             <h2>Provider status</h2>
           </div>
@@ -731,8 +849,14 @@ function SettingsPage({ data, refresh }: { data: AppData; refresh: () => Promise
         <div className="button-row">
           <button onClick={() => updatePublish({ warmup_complete: true })} disabled={!!busy}>Mark Warm-up Complete</button>
           <button onClick={() => updatePublish({ warmup_complete: false })} disabled={!!busy}>Lock Warm-up</button>
-          <button onClick={() => updatePublish({ mode: "uploadpost_dry_run" })} disabled={!!busy}>Dry-Run Mode</button>
-          <button onClick={() => updatePublish({ mode: "uploadpost_live" })} disabled={!!busy}>Live Mode Gate</button>
+          <button onClick={() => updatePublish({ mode: "dry_run" })} disabled={!!busy}>Dry-Run Mode</button>
+          <button onClick={() => updatePublish({ mode: "live" })} disabled={!!busy}>Live Mode Gate</button>
+        </div>
+        <div className="publish-summary">
+          <Pill tone="yellow" label="auto-slot" />
+          <span>{data.publish?.auto_schedule?.slots_per_day || 8}/day</span>
+          <span>minute :{String(data.publish?.auto_schedule?.slot_minute ?? 14).padStart(2, "0")}</span>
+          <span>{data.publish?.auto_schedule?.timezone || "local time"}</span>
         </div>
         <p>Keys stay outside the repo. Use Keychain/private runtime config only.</p>
       </section>
@@ -769,6 +893,10 @@ function Advanced({ data, action }: { data: AppData; action: (intent: string, pa
         </div>
       </section>
       <JobStrip jobs={data.jobs} />
+      <section className="panel">
+        <div className="section-heading"><h2>Review schedule</h2></div>
+        <DataList rows={data.schedule?.campaigns || []} />
+      </section>
       <section className="panel">
         <div className="section-heading"><h2>Campaign records</h2></div>
         <DataList rows={data.projects} />
@@ -807,6 +935,7 @@ export function App() {
   const [data, setData] = useState<AppData>(initialData);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const proofLastFetchedRef = useRef(0);
 
   const refreshCore = useCallback(async () => {
     setLoading(true);
@@ -814,22 +943,29 @@ export function App() {
     try {
       const fastController = new AbortController();
       const fastTimeout = window.setTimeout(() => fastController.abort(), 20000);
-      const [fastCore, jobs] = await Promise.all([fetchFastCore(fastController.signal), fetchJobs(fastController.signal)]);
+      const coreFetch = route === "reviews" ? fetchReviewCore : fetchFastCore;
+      const [fastCore, jobs] = await Promise.all([coreFetch(fastController.signal), fetchJobs(fastController.signal)]);
       window.clearTimeout(fastTimeout);
       setData((previous) => ({ ...previous, ...fastCore, jobs }));
       setLoading(false);
 
-      const proofController = new AbortController();
-      const proofTimeout = window.setTimeout(() => proofController.abort(), 25000);
-      fetchProofCore(proofController.signal)
-        .then((proofCore) => setData((previous) => ({ ...previous, ...proofCore })))
-        .catch(() => undefined)
-        .finally(() => window.clearTimeout(proofTimeout));
+      const proofDue =
+        route !== "reviews" &&
+        (route === "readiness" || route === "settings" || Date.now() - proofLastFetchedRef.current > 60000);
+      if (proofDue) {
+        proofLastFetchedRef.current = Date.now();
+        const proofController = new AbortController();
+        const proofTimeout = window.setTimeout(() => proofController.abort(), 25000);
+        fetchProofCore(proofController.signal)
+          .then((proofCore) => setData((previous) => ({ ...previous, ...proofCore })))
+          .catch(() => undefined)
+          .finally(() => window.clearTimeout(proofTimeout));
+      }
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
       setLoading(false);
     }
-  }, []);
+  }, [route]);
 
   const refreshJobs = useCallback(async () => {
     try {
@@ -873,7 +1009,7 @@ export function App() {
   useEffect(() => {
     refreshCore();
     const coreTimer = window.setInterval(refreshCore, 5000);
-    const jobTimer = window.setInterval(refreshJobs, 2000);
+    const jobTimer = window.setInterval(refreshJobs, 5000);
     return () => {
       window.clearInterval(coreTimer);
       window.clearInterval(jobTimer);

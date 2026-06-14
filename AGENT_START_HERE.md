@@ -11,6 +11,7 @@ Work from repository truth:
 - Run the incoming verification command before claiming anything works.
 - Treat SQLite/backend as source of truth.
 - Treat Hermes as orchestration.
+- Treat `clipping-ops-minimax` / `MiniMax-M3` as the normal Hermes profile/model for Clipping Ops.
 - Treat scripts as deterministic media/test workers.
 - Treat Discord as notifications only.
 - Treat the browser cockpit at `http://127.0.0.1:8765/app` as the human approval surface.
@@ -40,6 +41,12 @@ Expected result in a no-key clone:
 - `docs/streamer-composition.md` for streamer framing rules.
 - `docs/safety-gates.md` for hard stops.
 
+## MiniMax Hermes Factory
+
+Normal production review flow is not a broad 35-day scrape. Hermes should index top Twitch clips from the last 24 hours first, then widen only if supply is stale or empty: 48h, 72h, 4d, then 5d. The review factory target is three active streamer campaigns, one kit per campaign every three hours, capped at eight per campaign and 24 total per local day.
+
+Use `./script/configure_minimax_hermes_local.sh` only on the operator's own machine to store their MiniMax key locally. Then run `./script/verify_minimax_hermes.sh` and `./script/install_hermes_clip_ops.sh`. Never commit or print the key.
+
 ## Do Not Improvise
 
 Never invent source proof, campaign rules, subtitles, API success, review approval, or readiness. If something is red or yellow, report the blocker and the exact next safe action.
@@ -50,7 +57,7 @@ Do not run foreground mouse-driven GUI QA on an operator's active Mac unless the
 
 ## Current Product Shape
 
-The repo is a source-build local web cockpit plus Python backend, not a prebuilt notarized app and not a media drop. Each operator supplies their own credentials, Hermes profile, Discord config, campaign access, account warm-up, and final posting confirmations.
+The repo is a source-build local web cockpit plus Python backend, not a media drop and not a native app bundle. Each operator supplies their own credentials, Hermes profile, Discord config, campaign access, account warm-up, and final posting confirmations.
 
 Normal operation:
 
@@ -59,6 +66,6 @@ Normal operation:
 ./script/build_and_run.sh
 ```
 
-Then open `http://127.0.0.1:8765/app`. The Swift app in `Sources/ClippingOpsCockpit` is legacy reference during migration, not the supported buddy UI.
+Then open `http://127.0.0.1:8765/app`. There is no native Swift/macOS app path in this repo anymore; the browser cockpit is the only supported human UI.
 
-Live Upload-Post work is intentionally locked until account warm-up is complete and the operator provides their own key locally.
+Rejected review kits are killed, not revised directly. The rejection note becomes learning signal for the next cycle. Live Upload-Post work is intentionally locked until account warm-up is complete and the operator provides their own key locally.

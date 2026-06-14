@@ -44,6 +44,35 @@ export type CampaignProject = {
   last_checked_at?: string;
 };
 
+export type ReviewScheduleCampaign = {
+  campaign_slug?: string;
+  campaign_name?: string;
+  enabled?: boolean;
+  cadence_hours?: number;
+  daily_cap?: number;
+  generated_today?: number;
+  pending?: boolean;
+  last_queued_at?: string;
+  next_due_at?: string;
+  learning?: {
+    recent_signal_count?: number;
+    avoid_tags?: Record<string, number>;
+    recent_notes?: string[];
+  };
+};
+
+export type ReviewSchedule = {
+  status?: string;
+  day?: string;
+  daily_cap?: number;
+  generated_today?: number;
+  approved_today?: number;
+  rejected_today?: number;
+  needs_review_backlog?: number;
+  backlog_limit?: number;
+  campaigns?: ReviewScheduleCampaign[];
+};
+
 export type RenderKit = {
   id: string;
   title?: string;
@@ -67,6 +96,15 @@ export type RenderKit = {
   caption_path?: string;
   review_video_path?: string;
   rejection_notes?: string;
+  publish_package_id?: string;
+  publish_package_status?: string;
+  publish_job_id?: string;
+  publish_status?: string;
+  publish_stage?: string;
+  publish_mode?: string;
+  publish_scheduled_at?: string;
+  publish_hermes_job_id?: string;
+  publish_error?: string;
 };
 
 export type JobRecord = {
@@ -88,6 +126,15 @@ export type JobRecord = {
 };
 
 export type PublishStatus = {
+  auto_schedule?: {
+    auto_slot_on_approve?: boolean;
+    mode?: string;
+    slots_per_day?: number;
+    slot_minute?: number;
+    slot_hours?: number[];
+    cadence_hours?: number;
+    timezone?: string;
+  };
   provider?: {
     mode?: string;
     api_key?: string;
@@ -113,6 +160,15 @@ export type PublishJob = {
 export type AgentsPayload = {
   status?: string;
   selected_profile?: string;
+  provider?: string;
+  model?: string;
+  minimax?: {
+    status?: string;
+    ready?: boolean;
+    blockers?: string[];
+    expected_profile?: string;
+    expected_model?: string;
+  };
   hermes_available?: boolean;
   cron_jobs?: string[];
 };
@@ -130,6 +186,8 @@ export type AppData = {
   kits: RenderKit[];
   jobs: JobRecord[];
   agents?: AgentsPayload;
+  schedule?: ReviewSchedule;
+  learning?: unknown[];
   publish?: PublishStatus;
   auth?: AuthStatus;
   platforms?: unknown;

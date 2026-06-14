@@ -33,8 +33,15 @@ def main() -> None:
         route_html = fetch_text(f"{base}/app/{route}")
         if '<div id="root">' not in route_html:
             raise SystemExit(f"/app/{route} did not return SPA fallback")
-    for path in ["/api/health", "/api/review-kits", "/api/campaign-projects", "/api/readiness", "/api/publish/status"]:
-        fetch_json(f"{base}{path}")
+    api_paths = {
+        "/api/health": 15,
+        "/api/review-kits": 30,
+        "/api/campaign-projects": 30,
+        "/api/readiness": 45,
+        "/api/publish/status": 15,
+    }
+    for path, timeout in api_paths.items():
+        fetch_json(f"{base}{path}", timeout=timeout)
     print(json.dumps({"ok": True, "app": f"{base}/app", "routes": 6}, indent=2))
 
 

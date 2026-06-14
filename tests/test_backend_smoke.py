@@ -1,12 +1,14 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 import importlib.util
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from clipping_ops_backend.caption_style import (
     CAPTION_AUDIO_SYNC_DELAY_SECONDS,
@@ -104,9 +106,40 @@ class BackendSmokeTests(unittest.TestCase):
                 "duration": 21.0,
                 "view_count": 2500,
                 "local_media_path": str(media),
+                "clip_created_at": "2026-05-15T21:08:03Z",
                 "provenance": "official_api_metadata",
                 "risk_flags": ["campaign_project_yourrage", "source_media_verified_local", "selected_feeder_yourragegaming"],
             }
+        )
+        db.create_campaign_evidence(
+            {
+                "campaign_id": "yourrage",
+                "evidence_type": "campaign_rules",
+                "title": "YourRAGE campaign rules",
+                "source_url": "https://clipping.net/dashboard/campaigns/yourrage-x-clipping",
+                "extracted_text": "Requirements: None. Source route: Twitch handle yourragegaming. Caption Requirements: None.",
+                "confidence": 0.9,
+            }
+        )
+        db.execute(
+            """
+            INSERT INTO transcripts
+              (id, clip_candidate_id, provider, language, confidence, full_text, segments_json, word_timings_json, status, created_at)
+            VALUES (?, ?, 'misterwhisper-local', 'en', 0.91, ?, ?, ?, 'succeeded', ?)
+            """,
+            (
+                f"transcript_{clip_id}",
+                clip_id,
+                "YourRAGE had chat crying when the stream changed.",
+                json.dumps([{"start": 0.0, "end": 2.2, "text": "YourRAGE had chat crying when the stream changed."}]),
+                json.dumps([
+                    {"start": 0.0, "end": 0.4, "word": "YourRAGE"},
+                    {"start": 0.4, "end": 0.8, "word": "had"},
+                    {"start": 0.8, "end": 1.2, "word": "chat"},
+                    {"start": 1.2, "end": 1.6, "word": "crying"},
+                ]),
+                db.utc_now(),
+            ),
         )
         nomination_id = db.create_nomination(
             clip_id,
@@ -129,9 +162,38 @@ class BackendSmokeTests(unittest.TestCase):
                 {
                     "profile": "campaign_short_final_v1",
                     "rendered_text": {
-                        "hook_card": "YourRAGE had chat crying",
-                        "caption_beats": ["CHAT LOST", "IT"],
+                        "layout": "summary_hook_caption",
+                        "hook_card": "YourRAGE had chat fully crying",
+                        "hook_card_visible": True,
+                        "caption_beats": ["CHAT LOST", "STREAM WILD"],
+                        "caption_timeline": [
+                            {
+                                "text": "CHAT LOST",
+                                "start": 0.0,
+                                "end": 1.0,
+                                "timing_mode": "ensemble_consensus",
+                                "model_votes": 3,
+                                "vote_spread_seconds": 0.2,
+                            },
+                            {
+                                "text": "STREAM WILD",
+                                "start": 1.1,
+                                "end": 2.1,
+                                "timing_mode": "ensemble_consensus",
+                                "model_votes": 3,
+                                "vote_spread_seconds": 0.2,
+                            },
+                        ],
+                        "composition": {"mode": "streamer_center_preserve_source"},
                     },
+                }
+            ),
+            "editorial_review.json": json.dumps(
+                {
+                    "status": "green",
+                    "blockers": [],
+                    "warnings": [],
+                    "thresholds": {"quota_recovery": False},
                 }
             ),
             "ffprobe.json": json.dumps(
@@ -163,6 +225,36 @@ class BackendSmokeTests(unittest.TestCase):
             db.execute("UPDATE render_kits SET review_status='approved_manual_prep', approved_by='user', approved_at=? WHERE id=?", (db.utc_now(), kit_id))
         return kit_id
 
+    def clone_publishable_kit(self, base_kit_id: str, *, campaign_slug: str = "yourrage") -> str:
+        base = db.one("SELECT * FROM render_kits WHERE id = ?", (base_kit_id,))
+        self.assertIsNotNone(base)
+        suffix = db.new_id("pubclone")
+        kit_dir = Path(self._tmp.name) / "render_kits" / f"publish-clone-{campaign_slug}-{suffix}"
+        kit_dir.mkdir(parents=True, exist_ok=True)
+        copied = {}
+        for field in ("review_video_path", "caption_path", "transcript_path", "checklist_path", "source_path", "risk_path"):
+            source = Path(str(base[field]))
+            target = kit_dir / source.name
+            shutil.copy2(source, target)
+            copied[field] = target
+        kit_id = db.create_render_kit(
+            str(base["nomination_id"]),
+            f"{campaign_slug} publish ready {suffix}",
+            copied["review_video_path"],
+            copied["caption_path"],
+            copied["transcript_path"],
+            copied["checklist_path"],
+            copied["source_path"],
+            copied["risk_path"],
+            is_demo=False,
+            campaign_slug=campaign_slug,
+        )
+        db.execute(
+            "UPDATE render_kits SET review_status='approved_manual_prep', approved_by='user', approved_at=? WHERE id=?",
+            (db.utc_now(), kit_id),
+        )
+        return kit_id
+
     def test_publish_dry_run_prepares_and_validates_approved_kit(self):
         kit_id = self.make_publishable_kit()
         package = publishing.create_publish_package(kit_id, platforms=["tiktok", "instagram", "youtube"])
@@ -176,6 +268,113 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertEqual(updated["status"], "dry_run_succeeded")
         self.assertEqual(updated["platforms"], ["tiktok", "youtube"])
         self.assertIn("Apikey <redacted>", json.dumps(updated["provider_response"]))
+
+    def test_approval_auto_slot_creates_deferred_dry_run_publish_job(self):
+        now = datetime(2026, 6, 14, 17, 15, tzinfo=timezone.utc)
+        kit_id = self.make_publishable_kit()
+
+        scheduled = publishing.schedule_approved_kit(kit_id, now=now, requested_by="test")
+
+        self.assertEqual(scheduled["status"], "scheduled")
+        self.assertEqual(scheduled["publish_package"]["kit_id"], kit_id)
+        self.assertEqual(scheduled["publish_job"]["kit_id"], kit_id)
+        self.assertEqual(scheduled["publish_job"]["mode"], "dry_run")
+        self.assertEqual(scheduled["publish_job"]["status"], "scheduled")
+        self.assertEqual(scheduled["publish_job"]["stage"], "waiting-for-slot")
+        scheduled_at = datetime.fromisoformat(scheduled["publish_job"]["scheduled_at"])
+        self.assertGreater(scheduled_at, now)
+        self.assertEqual(scheduled_at.minute, 14)
+        self.assertEqual(db.rows("SELECT * FROM job_runs WHERE intent='publish_dry_run'"), [])
+
+        again = publishing.schedule_approved_kit(kit_id, now=now, requested_by="test")
+
+        self.assertEqual(again["publish_job"]["id"], scheduled["publish_job"]["id"])
+        self.assertEqual(len(db.rows("SELECT * FROM publish_jobs WHERE kit_id=?", (kit_id,))), 1)
+
+    def test_publish_slot_allocator_fills_backlog_on_future_14_minute_slots(self):
+        now = datetime(2026, 6, 14, 17, 15, tzinfo=timezone.utc)
+        base_kit_id = self.make_publishable_kit()
+        kit_ids = [base_kit_id] + [self.clone_publishable_kit(base_kit_id) for _ in range(47)]
+
+        for kit_id in kit_ids:
+            publishing.schedule_approved_kit(kit_id, now=now, requested_by="test")
+        slots = [
+            str(row["scheduled_at"])
+            for row in db.rows("SELECT scheduled_at FROM publish_jobs WHERE status='scheduled' ORDER BY scheduled_at ASC")
+        ]
+        parsed = [datetime.fromisoformat(value) for value in slots]
+
+        self.assertEqual(len(set(slots)), 48)
+        self.assertEqual(parsed, sorted(parsed))
+        self.assertTrue(all(value > now for value in parsed))
+        self.assertTrue(all(value.minute == 14 for value in parsed))
+        self.assertTrue(all((right - left) == timedelta(hours=3) for left, right in zip(parsed, parsed[1:])))
+
+    def test_publish_slot_rebalance_avoids_adjacent_streamers_when_possible(self):
+        now = datetime(2026, 6, 14, 17, 15, tzinfo=timezone.utc)
+        base_kit_id = self.make_publishable_kit()
+        kit_ids = [
+            self.clone_publishable_kit(base_kit_id, campaign_slug=slug)
+            for slug in ["yourrage", "yourrage", "yourrage", "plaqueboymax", "plaqueboymax", "jasontheween"]
+        ]
+
+        for kit_id in kit_ids:
+            publishing.schedule_approved_kit(kit_id, now=now, requested_by="test")
+
+        rows = db.rows(
+            """
+            SELECT r.campaign_slug, p.scheduled_at
+            FROM publish_jobs p
+            JOIN render_kits r ON r.id = p.kit_id
+            WHERE p.status='scheduled'
+            ORDER BY p.scheduled_at ASC
+            """
+        )
+        slugs = [str(row["campaign_slug"]) for row in rows]
+        self.assertEqual(len(slugs), 6)
+        self.assertTrue(all(left != right for left, right in zip(slugs, slugs[1:])), slugs)
+
+    def test_publish_schedule_tick_queues_due_dry_run_once(self):
+        now = datetime(2026, 6, 14, 17, 15, tzinfo=timezone.utc)
+        kit_id = self.make_publishable_kit()
+        scheduled = publishing.schedule_approved_kit(kit_id, now=now, requested_by="test")
+        due_at = datetime.fromisoformat(scheduled["publish_job"]["scheduled_at"])
+
+        early = publishing.publish_schedule_tick(now=due_at - timedelta(minutes=1))
+
+        self.assertEqual(early["queued"], [])
+        self.assertEqual(db.rows("SELECT * FROM job_runs WHERE intent='publish_dry_run'"), [])
+
+        due = publishing.publish_schedule_tick(now=due_at)
+
+        self.assertEqual(due["status"], "queued")
+        self.assertEqual(len(due["queued"]), 1)
+        self.assertEqual(due["queued"][0]["intent"], "publish_dry_run")
+        queued_job = publishing.get_publish_job(scheduled["publish_job"]["id"])
+        self.assertEqual(queued_job["status"], "queued")
+        self.assertEqual(queued_job["stage"], "queued-for-hermes")
+        self.assertEqual(queued_job["hermes_job_id"], due["queued"][0]["id"])
+
+        repeated = publishing.publish_schedule_tick(now=due_at + timedelta(minutes=1))
+
+        self.assertEqual(repeated["queued"], [])
+        self.assertEqual(len(db.rows("SELECT * FROM job_runs WHERE intent='publish_dry_run'")), 1)
+
+    def test_publish_schedule_tick_backfills_approved_unslotted_kits(self):
+        now = datetime(2026, 6, 14, 17, 15, tzinfo=timezone.utc)
+        base_kit_id = self.make_publishable_kit()
+        second_kit_id = self.clone_publishable_kit(base_kit_id, campaign_slug="plaqueboymax")
+
+        tick = publishing.publish_schedule_tick(now=now)
+
+        self.assertEqual(tick["queued"], [])
+        self.assertEqual([item["kit_id"] for item in tick["scheduled_backlog"]], [base_kit_id, second_kit_id])
+        self.assertEqual(len({item["scheduled_at"] for item in tick["scheduled_backlog"]}), 2)
+        jobs = db.rows("SELECT * FROM publish_jobs ORDER BY scheduled_at ASC")
+        self.assertEqual(len(jobs), 2)
+        self.assertEqual([row["kit_id"] for row in jobs], [base_kit_id, second_kit_id])
+        self.assertTrue(all(str(row["status"]) == "scheduled" for row in jobs))
+        self.assertTrue(all(datetime.fromisoformat(str(row["scheduled_at"])).minute == 14 for row in jobs))
 
     def test_publish_blocks_unapproved_demo_and_invalid_platforms(self):
         unapproved_id = self.make_publishable_kit(approved=False)
@@ -257,11 +456,42 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertEqual(caption_display_text("NO SHIT, gang."), "NO SHIT GANG")
         self.assertEqual(caption_display_text("n***a's who"), "N***A'S WHO")
         self.assertEqual(caption_beat_violations(["N***A'S WHO"]), [])
-        self.assertGreaterEqual(caption_start_for_group(0.18, 2.13, "WHAT THE"), 1.84)
-        self.assertLessEqual(caption_start_for_group(0.04, 0.39, "I SHOULD"), 0.12)
+        self.assertAlmostEqual(caption_start_for_group(0.04, 0.39, "I SHOULD"), 0.04, places=3)
+
+    def test_editorial_gate_uses_freshness_window_view_floor(self):
+        stale_clip = {
+            "id": "clip_stale_floor",
+            "campaign_slug": "yourrage",
+            "title": "Fresh streamer moment",
+            "duration": 24.0,
+            "view_count": 121,
+            "risk_flags_json": json.dumps(["campaign_project_yourrage", "source_media_verified_local"]),
+        }
+        fresh_clip = {
+            **stale_clip,
+            "id": "clip_top_24h_floor",
+            "risk_flags_json": json.dumps(
+                [
+                    "campaign_project_yourrage",
+                    "source_media_verified_local",
+                    "editorial_indexed_top_fresh",
+                    "fresh_window_24h",
+                    "top_24h_candidate",
+                ]
+            ),
+        }
+
+        stale_gate = db.editorial_candidate_gate(stale_clip, "yourrage")
+        fresh_gate = db.editorial_candidate_gate(fresh_clip, "yourrage")
+
+        self.assertEqual(stale_gate["thresholds"]["min_views"], 1350)
+        self.assertIn("editorial floor", "; ".join(stale_gate["blockers"]))
+        self.assertEqual(fresh_gate["thresholds"]["min_views"], 5)
+        self.assertEqual(fresh_gate["status"], "green")
         delayed_start, delayed_end = apply_caption_audio_sync_delay(1.55, 2.11)
-        self.assertAlmostEqual(delayed_start, 1.55 + CAPTION_AUDIO_SYNC_DELAY_SECONDS, places=3)
-        self.assertAlmostEqual(delayed_end, 2.11 + CAPTION_AUDIO_SYNC_DELAY_SECONDS, places=3)
+        self.assertEqual(CAPTION_AUDIO_SYNC_DELAY_SECONDS, 0.0)
+        self.assertAlmostEqual(delayed_start, 1.55, places=3)
+        self.assertAlmostEqual(delayed_end, 2.11, places=3)
 
         repaired = repair_timed_words_for_caption(
             [
@@ -278,7 +508,24 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertLessEqual(long_span[0]["end"] - long_span[0]["start"], 0.26)
         self.assertAlmostEqual(long_span[0]["end"], 5.16, places=3)
 
-    def test_ensemble_caption_beats_keep_visual_audio_delay(self):
+    def test_editorial_gate_decreases_view_floor_through_three_day_window(self):
+        clip = {
+            "id": "clip_three_day_floor",
+            "campaign_slug": "jasontheween",
+            "title": "Jason had the lobby yelling",
+            "duration": 31.0,
+            "view_count": 34,
+            "risk_flags_json": json.dumps(["campaign_project_jasontheween", "source_media_verified_local", "fresh_window_72h"]),
+        }
+
+        below_floor = db.editorial_candidate_gate(clip, "jasontheween")
+        at_floor = db.editorial_candidate_gate({**clip, "view_count": 35}, "jasontheween")
+
+        self.assertEqual(below_floor["thresholds"]["min_views"], 35)
+        self.assertNotEqual(below_floor["status"], "green")
+        self.assertEqual(at_floor["status"], "green")
+
+    def test_ensemble_caption_beats_do_not_apply_second_render_delay(self):
         module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"
         spec = importlib.util.spec_from_file_location("build_evidence_review_kit_for_test", module_path)
         self.assertIsNotNone(spec)
@@ -308,8 +555,80 @@ class BackendSmokeTests(unittest.TestCase):
             }
         )
         self.assertEqual(beats[0]["text"], "NO SHIT")
-        self.assertAlmostEqual(beats[0]["start"], 1.0 + CAPTION_AUDIO_SYNC_DELAY_SECONDS, places=3)
-        self.assertAlmostEqual(beats[0]["audio_sync_delay_seconds"], CAPTION_AUDIO_SYNC_DELAY_SECONDS, places=3)
+        self.assertAlmostEqual(beats[0]["start"], 1.0, places=3)
+        self.assertAlmostEqual(beats[0]["audio_sync_delay_seconds"], 0.0, places=3)
+
+    def test_word_timed_caption_beats_start_on_spoken_word(self):
+        module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"
+        spec = importlib.util.spec_from_file_location("build_evidence_review_kit_for_sync_test", module_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["build_evidence_review_kit_for_sync_test"] = module
+        spec.loader.exec_module(module)
+
+        beats = module.caption_beats_from_transcript(
+            {
+                "provider": "forced_alignment_test",
+                "word_timings_json": json.dumps(
+                    [
+                        {"word": "No", "start": 1.0, "end": 1.12},
+                        {"word": "shit", "start": 1.16, "end": 1.31},
+                        {"word": "gang", "start": 1.8, "end": 1.98},
+                    ]
+                ),
+            }
+        )
+
+        self.assertEqual(beats[0]["text"], "NO SHIT")
+        self.assertAlmostEqual(beats[0]["source_start"], 1.0, places=3)
+        self.assertLessEqual(beats[0]["start"] - beats[0]["source_start"], 0.05)
+        self.assertAlmostEqual(beats[0]["audio_sync_delay_seconds"], 0.0, places=3)
+
+    def test_fast_ensemble_captions_trim_previous_tail_instead_of_lagging_next_word(self):
+        module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"
+        spec = importlib.util.spec_from_file_location("build_evidence_review_kit_for_fast_sync_test", module_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["build_evidence_review_kit_for_fast_sync_test"] = module
+        spec.loader.exec_module(module)
+
+        beats = module.caption_beats_from_transcript(
+            {
+                "provider": "ensemble_timestamp_consensus_v1",
+                "segments_json": json.dumps(
+                    [
+                        {
+                            "caption_beat": True,
+                            "text": "I'M NOT",
+                            "start": 0.59,
+                            "end": 1.12,
+                            "source_start": 0.59,
+                            "source_end": 0.96,
+                            "timing_mode": "ensemble_consensus",
+                            "model_votes": 4,
+                            "vote_spread_seconds": 0.08,
+                        },
+                        {
+                            "caption_beat": True,
+                            "text": "GONNA LIE",
+                            "start": 0.96,
+                            "end": 1.35,
+                            "source_start": 0.96,
+                            "source_end": 1.19,
+                            "timing_mode": "ensemble_consensus",
+                            "model_votes": 4,
+                            "vote_spread_seconds": 0.08,
+                        },
+                    ]
+                ),
+            }
+        )
+
+        self.assertEqual([beat["text"] for beat in beats], ["I'M NOT", "GONNA LIE"])
+        self.assertLessEqual(beats[1]["start"] - beats[1]["source_start"], 0.08)
+        self.assertLessEqual(beats[0]["end"], beats[1]["start"] - module.CAPTION_BEAT_GAP + 0.001)
 
     def test_top_hook_card_uses_reference_style_source_space_font(self):
         module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"
@@ -375,13 +694,13 @@ class BackendSmokeTests(unittest.TestCase):
             self.assertGreaterEqual(metrics["bottom_pad"], 14)
             self.assertLessEqual(metrics["bottom_pad"], 14)
             self.assertLess(abs(metrics["card_center_x"] - 540), 2)
-            reference = Image.open(
-                Path(__file__).resolve().parents[1]
-                / "artifacts"
-                / "review-kit-audit"
-                / "top-typography-audit"
-                / "reference-frame-1080.jpg"
-            ).convert("RGBA")
+            root = Path(__file__).resolve().parents[1]
+            reference_path = root / "artifacts" / "review-kit-audit" / "top-typography-audit" / "reference-frame-1080.jpg"
+            if not reference_path.exists():
+                reference_path = root / "artifacts" / "review-kit-audit" / "top-card-parity-current" / "reference_1080.jpg"
+            if not reference_path.exists():
+                self.skipTest("local top-card reference frame is not present")
+            reference = Image.open(reference_path).convert("RGBA")
             reference_metrics = measure_reference(reference)
             production_frame = Image.alpha_composite(reference, overlay)
             visual = compare_visual_similarity(
@@ -410,6 +729,32 @@ class BackendSmokeTests(unittest.TestCase):
             self.assertLessEqual(metrics["card_width"], 645)
             self.assertGreaterEqual(metrics["left_pad"], 33)
             self.assertLessEqual(metrics["left_pad"], 36)
+            self.assertLess(abs(metrics["card_center_x"] - 540), 4)
+
+    def test_long_top_hook_fits_inside_reference_card(self):
+        from PIL import Image
+        from script.audit_top_card_reference import measure_overlay
+
+        module_path = Path(__file__).resolve().parents[1] / "script" / "build_evidence_review_kit.py"
+        spec = importlib.util.spec_from_file_location("build_evidence_review_kit_for_long_top_card_test", module_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["build_evidence_review_kit_for_long_top_card_test"] = module
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "title_card.png"
+            hook = module.headline_card(
+                path,
+                "Diana Lim Hits An Insane Combo On Sabrina Alvarez At JasonTheWeen's Boxing Event",
+                "jasontheween",
+            )
+            self.assertIn("Diana Lim", hook)
+            metrics = measure_overlay(Image.open(path).convert("RGBA"))
+            self.assertLessEqual(metrics["card_width"], 883)
+            self.assertGreaterEqual(metrics["left_pad"], 30)
+            self.assertGreaterEqual(metrics["right_pad"], 30)
             self.assertLess(abs(metrics["card_center_x"] - 540), 4)
 
     def test_each_top_hook_line_is_centered_within_card(self):
@@ -508,6 +853,386 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertIn("counts", payload)
         self.assertIn("review_kits", payload["counts"])
 
+    def test_manual_editorial_review_pick_warns_on_view_floor_without_bypassing_other_blockers(self):
+        manual_pick = {
+            "id": "clip_manual_pick",
+            "campaign_slug": "plaqueboymax",
+            "title": "strong manual pick",
+            "duration": 35,
+            "view_count": 1200,
+            "risk_flags": ["campaign_project_plaqueboymax", "manual_editorial_review_pick"],
+        }
+        overlong_pick = {
+            **manual_pick,
+            "id": "clip_manual_pick_long",
+            "duration": 59.9,
+        }
+
+        manual_gate = db.editorial_candidate_gate(manual_pick, "plaqueboymax")
+        overlong_gate = db.editorial_candidate_gate(overlong_pick, "plaqueboymax")
+
+        self.assertEqual(manual_gate["status"], "green")
+        self.assertTrue(any("manual editorial review pick" in item for item in manual_gate["warnings"]))
+        self.assertNotEqual(overlong_gate["status"], "green")
+        self.assertTrue(any("cut must be tighter" in item for item in overlong_gate["blockers"]))
+
+    def test_quota_recovery_pick_relaxes_view_floor_and_weak_title_only(self):
+        quota_pick = {
+            "id": "clip_quota_recovery_floor",
+            "campaign_slug": "yourrage",
+            "title": ".",
+            "duration": 30.0,
+            "view_count": 800,
+            "risk_flags_json": json.dumps(["campaign_project_yourrage", "source_media_verified_local"]),
+        }
+        normal_gate = db.editorial_candidate_gate(quota_pick, "yourrage")
+        recovery_gate = db.editorial_candidate_gate(quota_pick, "yourrage", quota_recovery=True)
+
+        self.assertNotEqual(normal_gate["status"], "green")
+        self.assertEqual(recovery_gate["status"], "green")
+        self.assertTrue(any("quota recovery" in item for item in recovery_gate["warnings"]))
+        self.assertFalse(recovery_gate["blockers"])
+
+        metadata_only = {
+            **quota_pick,
+            "id": "clip_quota_recovery_metadata_only",
+            "risk_flags_json": json.dumps(["campaign_project_yourrage", "metadata_only_no_download"]),
+        }
+        overlong = {**quota_pick, "id": "clip_quota_recovery_overlong", "duration": 59.9}
+
+        self.assertNotEqual(db.editorial_candidate_gate(metadata_only, "yourrage", quota_recovery=True)["status"], "green")
+        self.assertNotEqual(db.editorial_candidate_gate(overlong, "yourrage", quota_recovery=True)["status"], "green")
+
+    def test_quote_like_viewer_hooks_stay_clip_specific(self):
+        from script import build_evidence_review_kit as module
+
+        rage_hook = module.viewer_hook(
+            "YourRAGE: WHAT IS THIS LAND BRO DON'T DON'T DON'T PMO",
+            "yourrage",
+            "WHAT IS THIS LAND BRO DON'T DON'T DON'T PMO",
+        )
+        jason_hook = module.viewer_hook(
+            "JasonTheWeen: I'M NOT GOING BACK TO ARLINGTON I'M GOING TO PLAY LEAGUE OF LEGENDS AND I'M GAY OKAY",
+            "jasontheween",
+            "I'M NOT GOING BACK TO ARLINGTON I'M GOING TO PLAY LEAGUE OF LEGENDS AND I'M GAY OKAY",
+        )
+
+        self.assertNotIn("had the whole chat watching", rage_hook.lower())
+        self.assertNotIn("had the whole chat watching", jason_hook.lower())
+        self.assertNotIn("YourRAGE said:", rage_hook)
+        self.assertNotIn("Jason said:", jason_hook)
+        self.assertEqual(rage_hook, "YourRAGE opened a link and instantly regretted it")
+        self.assertEqual(jason_hook, "Jason made a wild Arlington exit plan")
+
+    def test_short_viewer_hooks_gain_context_instead_of_generic_chat_fallback(self):
+        from script import build_evidence_review_kit as module
+
+        hook = module.viewer_hook(
+            "That is not ExtraEmily",
+            "jasontheween",
+            "That is not ExtraEmily bear.",
+        )
+
+        self.assertNotIn("had the whole chat watching", hook.lower())
+        self.assertEqual(hook, "Jason shut down the ExtraEmily comparison")
+
+    def test_active_needs_review_hook_overrides_replace_bad_raw_titles(self):
+        from script import build_evidence_review_kit as module
+
+        examples = {
+            "clip_e96ab8000070": ("woj the hero", "jasontheween", "Jason got confused by the little book"),
+            "clip_b071c40cabbf": ("Nor ro too 😭✌️", "yourrage", "YourRAGE lost it over a wild anime clip"),
+            "clip_c314daceaba2": ("Uno Reverse Card", "yourrage", "YourRAGE tried to dodge the Agent and Emily setup"),
+            "clip_497dd35b719c": (".", "jasontheween", "Jason's exploration segment went off the rails"),
+        }
+        for clip_id, (title, handle, expected) in examples.items():
+            hook = module.viewer_hook(title, handle, transcript_text="", clip_id=clip_id)
+            self.assertEqual(hook, expected)
+            self.assertNotIn(" said:", hook)
+
+    def test_hook_quality_selects_good_card_and_blocks_generic_cards(self):
+        from clipping_ops_backend import hook_quality
+
+        selected = hook_quality.select_hook_candidate(
+            [
+                {"text": "YourRAGE had the whole chat watching", "source": "local_fallback"},
+                {"text": "YourRAGE said: WHAT IS THIS LAND BRO", "source": "quote_dump"},
+                {"text": "Nor ro too 😭✌️", "source": "raw_title"},
+                {"text": "YourRAGE opened a link and instantly regretted it", "source": "hermes"},
+            ],
+            clip_title="Nor ro too 😭✌️",
+            handle="yourrage",
+            campaign_slug="yourrage",
+            transcript_text="WHAT IS THIS LAND BRO DON'T DON'T DON'T PMO",
+            recent_hooks=[],
+        )
+
+        self.assertEqual(selected["status"], "succeeded")
+        self.assertEqual(selected["selected_hook"], "YourRAGE opened a link and instantly regretted it")
+        self.assertEqual(selected["selected_source"], "hermes")
+        self.assertTrue(any("generic_chat_hook" in item["violations"] for item in selected["candidates"]))
+        self.assertTrue(any("quote_dump_hook" in item["violations"] for item in selected["candidates"]))
+        self.assertTrue(any("raw_title_echo" in item["violations"] for item in selected["candidates"]))
+
+        blocked = hook_quality.select_hook_candidate(
+            [
+                {"text": "YourRAGE had the whole chat watching", "source": "local_fallback"},
+                {"text": "YourRAGE said: WHAT IS THIS LAND BRO", "source": "quote_dump"},
+            ],
+            clip_title="Nor ro too 😭✌️",
+            handle="yourrage",
+            campaign_slug="yourrage",
+            transcript_text="WHAT IS THIS LAND BRO DON'T DON'T DON'T PMO",
+        )
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["blocker_code"], "blocked_hook_quality")
+        self.assertIn("No hook candidate passed", blocked["blocker"])
+
+    def test_campaign_review_hook_quality_blocks_before_rendering(self):
+        from clipping_ops_backend.hook_quality import HookQualityError
+        from script import build_evidence_review_kit as module
+
+        candidate = module.Candidate(
+            clip={
+                "id": "clip_bad_hook_quality",
+                "campaign_slug": "yourrage",
+                "source_platform": "twitch",
+                "source_url": "https://www.twitch.tv/yourragegaming/clip/bad-hook-quality",
+                "title": ".",
+                "duration": 21.0,
+                "view_count": 2500,
+                "local_media_path": str(Path(self._tmp.name) / "bad-hook.mp4"),
+                "provenance": "official_api_metadata",
+                "risk_flags": ["campaign_project_yourrage", "source_media_verified_local"],
+            },
+            route={"creator_handle": "yourrage", "platform": "twitch"},
+            rules=[{"campaign_id": "yourrage", "title": "YourRAGE rules"}],
+        )
+        transcript = {
+            "full_text": "ok bro",
+            "segments_json": json.dumps([{"start": 0.0, "end": 1.0, "text": "ok bro"}]),
+            "word_timings_json": json.dumps(
+                [
+                    {"start": 0.0, "end": 0.3, "word": "ok"},
+                    {"start": 0.3, "end": 0.6, "word": "bro"},
+                ]
+            ),
+        }
+        beats = [{"start": 0.0, "end": 0.8, "text": "OK BRO"}]
+
+        with mock.patch.object(module, "pick_candidate", return_value=candidate), \
+            mock.patch.object(module, "ensure_local_media", return_value=Path(candidate.clip["local_media_path"])), \
+            mock.patch.object(module, "ensure_transcript", return_value=transcript), \
+            mock.patch.object(module, "best_caption_beats_for_transcript", return_value=(beats, {"source": "test"})), \
+            mock.patch.object(module, "render_review_video") as render:
+            with self.assertRaises(HookQualityError) as raised:
+                module.build_review_kit(campaign_slug="yourrage", profile=db.CAMPAIGN_SHORT_PROFILE)
+
+        render.assert_not_called()
+        payload = raised.exception.payload
+        self.assertEqual(payload["status"], "blocked")
+        self.assertEqual(payload["blocker_code"], "blocked_hook_quality")
+
+    def test_hermes_hook_candidates_can_replace_blocked_local_fallback(self):
+        from script import build_evidence_review_kit as module
+
+        hook, payload = module.approve_viewer_hook(
+            {
+                "id": "clip_hermes_hook_candidate",
+                "title": ".",
+            },
+            "yourrage",
+            "ok bro",
+            "yourrage",
+            hook_candidates=[
+                {"text": "YourRAGE said: ok bro", "source": "local_quote_dump"},
+                {"text": "YourRAGE opened a link and instantly regretted it", "source": "hermes"},
+            ],
+        )
+
+        self.assertEqual(hook, "YourRAGE opened a link and instantly regretted it")
+        self.assertEqual(payload["selected_source"], "hermes")
+        self.assertEqual(payload["candidates"][0]["status"], "blocked")
+
+    def test_campaign_build_records_hook_quality_blocker_from_builder(self):
+        from clipping_ops_backend.server import build_campaign_reviews
+
+        media = Path(self._tmp.name) / "source_media" / "hook-blocked.mp4"
+        media.parent.mkdir(parents=True, exist_ok=True)
+        media.write_bytes(b"source proof")
+        db.upsert_clip_candidate(
+            {
+                "id": "clip_hook_quality_builder_blocked",
+                "campaign_slug": "yourrage",
+                "source_platform": "twitch",
+                "source_url": "https://www.twitch.tv/yourragegaming/clip/hook-quality-builder-blocked",
+                "creator_id": "yourragegaming",
+                "title": "YourRAGE opened a wild stream link",
+                "duration": 22.0,
+                "view_count": 12000,
+                "clip_created_at": "2026-06-14T12:00:00Z",
+                "local_media_path": str(media),
+                "provenance": "official_api_metadata",
+                "risk_flags": ["campaign_project_yourrage", "source_media_verified_local"],
+            }
+        )
+        db.create_campaign_evidence(
+            {
+                "campaign_id": "yourrage",
+                "evidence_type": "campaign_rules",
+                "title": "YourRAGE campaign rules",
+                "source_url": "https://clipping.net/dashboard/campaigns/yourrage-x-clipping",
+                "extracted_text": "Source route: Twitch handle yourragegaming.",
+                "confidence": 0.9,
+            }
+        )
+        blocked_payload = {
+            "status": "blocked",
+            "blocker_code": "blocked_hook_quality",
+            "blocker": "No hook candidate passed the top-card quality gate.",
+            "clip_id": "clip_hook_quality_builder_blocked",
+        }
+
+        with mock.patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                ["python", "script/build_evidence_review_kit.py"],
+                0,
+                stdout=json.dumps(blocked_payload),
+                stderr="",
+            ),
+        ) as run:
+            result = build_campaign_reviews("yourrage", limit=1, style=db.CAMPAIGN_SHORT_PROFILE)
+
+        run.assert_called_once()
+        self.assertEqual(result["status"], "blocked")
+        self.assertTrue(any("blocked_hook_quality" in blocker for blocker in result["blockers"]))
+        job = db.visible_jobs(limit=1)[0]
+        self.assertEqual(job["status"], "blocked")
+        self.assertIn("blocked_hook_quality", job["error"])
+
+    def test_campaign_build_passes_hermes_hook_candidates_to_builder(self):
+        from clipping_ops_backend.server import build_campaign_reviews
+
+        media = Path(self._tmp.name) / "source_media" / "hook-candidates.mp4"
+        media.parent.mkdir(parents=True, exist_ok=True)
+        media.write_bytes(b"source proof")
+        clip_id = db.upsert_clip_candidate(
+            {
+                "id": "clip_hook_candidates_passed",
+                "campaign_slug": "yourrage",
+                "source_platform": "twitch",
+                "source_url": "https://www.twitch.tv/yourragegaming/clip/hook-candidates-passed",
+                "creator_id": "yourragegaming",
+                "title": "YourRAGE opened a wild stream link",
+                "duration": 22.0,
+                "view_count": 12000,
+                "clip_created_at": "2026-06-14T12:00:00Z",
+                "local_media_path": str(media),
+                "provenance": "official_api_metadata",
+                "risk_flags": ["campaign_project_yourrage", "source_media_verified_local"],
+            }
+        )
+        db.create_campaign_evidence(
+            {
+                "campaign_id": "yourrage",
+                "evidence_type": "campaign_rules",
+                "title": "YourRAGE campaign rules",
+                "source_url": "https://clipping.net/dashboard/campaigns/yourrage-x-clipping",
+                "extracted_text": "Source route: Twitch handle yourragegaming.",
+                "confidence": 0.9,
+            }
+        )
+        hook_candidates = [{"text": "YourRAGE opened a link and instantly regretted it", "source": "hermes"}]
+
+        with mock.patch(
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                ["python", "script/build_evidence_review_kit.py"],
+                0,
+                stdout=json.dumps({"status": "blocked", "blocker_code": "test_stop", "blocker": "stop after command capture"}),
+                stderr="",
+            ),
+        ) as run:
+            build_campaign_reviews(
+                "yourrage",
+                limit=1,
+                style=db.CAMPAIGN_SHORT_PROFILE,
+                hook_candidates_by_clip={clip_id: hook_candidates},
+            )
+
+        command = run.call_args.args[0]
+        self.assertIn("--hook-candidates-json", command)
+        raw = command[command.index("--hook-candidates-json") + 1]
+        self.assertEqual(json.loads(raw), hook_candidates)
+
+    def test_quota_recovery_orders_recent_low_view_clip_before_old_high_view_clip(self):
+        old_high_view = {
+            "id": "clip_old_high_view",
+            "campaign_slug": "plaqueboymax",
+            "title": "Plaque old viral moment",
+            "duration": 29.0,
+            "view_count": 90000,
+            "clip_created_at": "2026-05-01T02:00:00Z",
+            "local_media_path": "/tmp/old-high-view.mp4",
+            "risk_flags_json": json.dumps(["campaign_project_plaqueboymax", "source_media_verified_local"]),
+        }
+        recent_low_view = {
+            "id": "clip_recent_low_view",
+            "campaign_slug": "plaqueboymax",
+            "title": "Plaque had stream confused",
+            "duration": 28.0,
+            "view_count": 6,
+            "clip_created_at": "2026-06-11T21:00:00Z",
+            "risk_flags_json": json.dumps(
+                ["campaign_project_plaqueboymax", "metadata_only_no_download", "fresh_window_24h", "top_24h_candidate"]
+            ),
+        }
+
+        ordered = db.review_candidate_order([old_high_view, recent_low_view], "plaqueboymax", quota_recovery=True)
+
+        self.assertEqual(ordered[0]["id"], "clip_recent_low_view")
+        self.assertEqual(ordered[0]["review_priority"]["freshness_window_hours"], 24)
+
+    def test_quota_recovery_sidecar_keeps_editorial_classifier_green(self):
+        kit_id = self.make_publishable_kit(approved=False, is_demo=False)
+        kit = db.one("SELECT * FROM render_kits WHERE id=?", (kit_id,))
+        nomination = db.one("SELECT * FROM render_nominations WHERE id=?", (kit["nomination_id"],))
+        clip_id = json.loads(nomination["clip_candidate_ids_json"])[0]
+        db.execute("UPDATE clip_candidates SET view_count=? WHERE id=?", (800, clip_id))
+        clip = db.one("SELECT * FROM clip_candidates WHERE id=?", (clip_id,))
+        kit_dir = Path(kit["review_video_path"]).parent
+        (kit_dir / "render_text_manifest.json").write_text(
+            json.dumps(
+                {
+                    "profile": "campaign_short_final_v1",
+                    "rendered_text": {
+                        "hook_card": "YourRAGE had chat crying",
+                        "caption_beats": ["CHAT LOST", "IT"],
+                        "composition": {"mode": "streamer_center_preserve_source"},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (kit_dir / "editorial_review.json").write_text(
+            json.dumps(
+                {
+                    "status": "green",
+                    "blockers": [],
+                    "warnings": ["quota recovery pick below normal view floor"],
+                    "thresholds": {"quota_recovery": True},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        proof = db.editorial_review_for_rendered_kit(clip, kit_dir, "yourrage", require_sidecar=True)
+
+        self.assertEqual(proof["status"], "green")
+        self.assertFalse(proof["blockers"])
+
     def test_hermes_job_intent_lifecycle_and_proof(self):
         job = db.create_job_intent(
             "build_campaign_reviews",
@@ -534,6 +1259,29 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertTrue(proof["ok"])
         self.assertEqual(proof["job_id"], job["id"])
 
+    def test_visible_jobs_compact_omits_heavy_json_and_truncates_text(self):
+        job_id = db.create_job(
+            "heavy job",
+            "render",
+            "failed",
+            "failed",
+            50,
+            logs="x" * 1000,
+            error="y" * 1000,
+            payload={"large": "p" * 1000},
+            result={"large": "r" * 1000},
+        )
+
+        compact = db.visible_jobs(limit=1, compact=True)[0]
+
+        self.assertEqual(compact["id"], job_id)
+        self.assertNotIn("payload", compact)
+        self.assertNotIn("result", compact)
+        self.assertNotIn("payload_json", compact)
+        self.assertNotIn("result_json", compact)
+        self.assertLessEqual(len(compact["logs"]), 240)
+        self.assertLessEqual(len(compact["error"]), 240)
+
     def test_hermes_job_dedupe_and_cancel(self):
         first = db.create_job_intent("refresh_campaign_project", {"campaign_slug": "kalshi"}, campaign_slug="kalshi")
         second = db.create_job_intent("refresh_campaign_project", {"campaign_slug": "kalshi"}, campaign_slug="kalshi")
@@ -544,6 +1292,449 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertEqual(cancelled["status"], "cancelled")
         replacement = db.create_job_intent("refresh_campaign_project", {"campaign_slug": "kalshi"}, campaign_slug="kalshi")
         self.assertNotEqual(first["id"], replacement["id"])
+
+    def test_fresh_clip_ladder_prefers_24h_then_expands_only_when_empty(self):
+        from clipping_ops_backend import platforms
+
+        now = datetime(2026, 6, 11, 6, 0, tzinfo=timezone.utc)
+        calls = []
+
+        def fake_twitch_get(path, params):
+            calls.append(params)
+            started = str(params["started_at"])
+            if started.startswith("2026-06-10"):
+                return {"status": "succeeded", "data": {"data": []}, "check_id": "check_24h_empty"}
+            return {
+                "status": "succeeded",
+                "data": {
+                    "data": [
+                        {
+                            "id": "fresh_48h_top",
+                            "url": "https://www.twitch.tv/yourragegaming/clip/fresh-48h-top",
+                            "title": "Fresh 48h top",
+                            "duration": 31,
+                            "view_count": 9000,
+                            "created_at": "2026-06-09T22:00:00Z",
+                        }
+                    ]
+                },
+                "check_id": "check_48h_hit",
+            }
+
+        old_get = platforms.twitch_get
+        platforms.twitch_get = fake_twitch_get
+        try:
+            payload = platforms.twitch_fresh_clip_supply_ladder("broadcaster", min_candidates=1, now=now)
+        finally:
+            platforms.twitch_get = old_get
+
+        self.assertEqual(payload["status"], "succeeded")
+        self.assertEqual(payload["selected_window_hours"], 48)
+        self.assertEqual(payload["data"]["data"][0]["id"], "fresh_48h_top")
+        self.assertEqual([item["window_hours"] for item in payload["windows"]], [24, 48])
+        self.assertEqual(len(calls), 2)
+
+    def test_review_scheduler_keeps_retrying_until_generated_daily_cap(self):
+        now = datetime(2026, 6, 11, 6, 0, tzinfo=timezone.utc)
+
+        def block_queued(result):
+            for job in result["queued"]:
+                claimed = db.claim_job(job["id"], "hermes-dispatcher", profile=db.hermes_profile())
+                db.block_job(
+                    claimed["id"],
+                    claimed["claim_token"],
+                    error="no green candidate",
+                    result={"status": "blocked", "created": []},
+                )
+
+        result = db.review_schedule_tick(now=now, require_campaign_ready=False)
+        self.assertEqual(result["status"], "queued")
+        self.assertEqual(len(result["queued"]), 3)
+        self.assertTrue(all(item["intent"] == "scheduled_campaign_review_build" for item in result["queued"]))
+        self.assertTrue(all(item["payload"]["freshness_ladder_hours"] == [24, 48, 72, 96, 120] for item in result["queued"]))
+        block_queued(result)
+
+        for _ in range(7):
+            result = db.review_schedule_tick(now=now + timedelta(hours=3), require_campaign_ready=False, force_due=True)
+            block_queued(result)
+        summary_payload = db.review_schedule_status(now=now + timedelta(hours=21))
+        self.assertEqual(summary_payload["attempted_today"], 24)
+        self.assertEqual(summary_payload["generated_today"], 0)
+        self.assertEqual(summary_payload["daily_cap"], 24)
+        self.assertTrue(all(item["attempted_today"] == 8 for item in summary_payload["campaigns"]))
+        self.assertTrue(all(item["generated_today"] == 0 for item in summary_payload["campaigns"]))
+
+        retry = db.review_schedule_tick(now=now + timedelta(hours=21), require_campaign_ready=False, force_due=True)
+        self.assertEqual(retry["status"], "queued")
+        self.assertEqual(len(retry["queued"]), 3)
+        self.assertTrue(all(item["payload"]["quota_recovery_mode"] for item in retry["queued"]))
+
+    def test_review_scheduler_caps_after_twenty_four_generated_outputs(self):
+        now = datetime(2026, 6, 11, 6, 0, tzinfo=timezone.utc)
+        slugs = ["yourrage", "plaqueboymax", "jasontheween"]
+        for index in range(24):
+            slug = slugs[index % len(slugs)]
+            job = db.create_job_intent(
+                "scheduled_campaign_review_build",
+                {"campaign_slug": slug, "schedule_day": "2026-06-11"},
+                campaign_slug=slug,
+                requested_by="review-scheduler",
+                force_new=True,
+            )
+            claimed = db.claim_job(job["id"], "hermes-dispatcher", profile=db.hermes_profile())
+            db.complete_job(
+                claimed["id"],
+                claimed["claim_token"],
+                result={"status": "succeeded", "created": [{"kit_id": f"kit_created_{index}"}]},
+            )
+
+        capped = db.review_schedule_tick(now=now, require_campaign_ready=False, force_due=True)
+        self.assertEqual(capped["status"], "capped")
+        self.assertEqual(capped["queued"], [])
+
+    def test_review_scheduler_topoff_respects_backlog_limit_when_forced(self):
+        now = datetime(2026, 6, 11, 6, 0, tzinfo=timezone.utc)
+        for _ in range(23):
+            self.make_publishable_kit(approved=False)
+
+        summary_payload = db.review_schedule_status(now=now)
+        self.assertEqual(summary_payload["needs_review_backlog"], 23)
+
+        topoff = db.review_schedule_tick(now=now, require_campaign_ready=False, force_due=True)
+        self.assertEqual(topoff["status"], "queued")
+        self.assertEqual(len(topoff["queued"]), 1)
+
+        blocked = db.review_schedule_tick(now=now + timedelta(minutes=1), require_campaign_ready=False, force_due=True)
+        self.assertEqual(blocked["status"], "backlog_blocked")
+        self.assertEqual(blocked["queued"], [])
+
+    def test_review_schedule_status_counts_backlog_without_video_validation(self):
+        self.make_publishable_kit(approved=False)
+
+        with mock.patch.object(db, "visible_render_kits", side_effect=AssertionError("should not inspect videos")):
+            status = db.review_schedule_status()
+
+        self.assertEqual(status["needs_review_backlog"], 1)
+
+    def test_review_schedule_status_excludes_red_sidecar_kits_from_backlog(self):
+        kit_id = self.make_publishable_kit(approved=False)
+        kit = db.one("SELECT * FROM render_kits WHERE id=?", (kit_id,))
+        Path(str(kit["review_video_path"])).parent.joinpath("style_critique.md").write_text(
+            "Status: red\nProfile: campaign_short_final_v1\n",
+            encoding="utf-8",
+        )
+
+        status = db.review_schedule_status()
+
+        self.assertEqual(status["needs_review_backlog"], 0)
+
+    def test_review_scheduler_enters_quota_recovery_after_blocked_attempts(self):
+        now = datetime(2026, 6, 11, 6, 0, tzinfo=timezone.utc)
+        first = db.review_schedule_tick(now=now, require_campaign_ready=False)
+        self.assertEqual(first["status"], "queued")
+
+        claimed = db.claim_job(first["queued"][0]["id"], "hermes-dispatcher", profile=db.hermes_profile())
+        db.block_job(
+            claimed["id"],
+            claimed["claim_token"],
+            error="no green candidate",
+            result={"status": "blocked", "created": []},
+        )
+
+        recovery = db.review_schedule_tick(now=now + timedelta(hours=3), require_campaign_ready=False, force_due=True)
+        self.assertEqual(recovery["status"], "queued")
+        self.assertTrue(all(item["payload"]["quota_recovery_mode"] for item in recovery["queued"]))
+        self.assertTrue(all(item["payload"]["quota_recovery_policy"]["allow_below_view_floor"] for item in recovery["queued"]))
+        self.assertTrue(all(item["payload"]["freshness_ladder_hours"][-1] >= 24 * 35 for item in recovery["queued"]))
+
+    def test_review_scheduler_counts_created_kits_not_blocked_attempts(self):
+        now = datetime(2026, 6, 11, 6, 0, tzinfo=timezone.utc)
+        payload = {"campaign_slug": "yourrage", "schedule_day": "2026-06-11"}
+        created_job = db.create_job_intent(
+            "scheduled_campaign_review_build",
+            payload,
+            campaign_slug="yourrage",
+            requested_by="review-scheduler",
+            force_new=True,
+        )
+        blocked_job = db.create_job_intent(
+            "scheduled_campaign_review_build",
+            payload,
+            campaign_slug="yourrage",
+            requested_by="review-scheduler",
+            force_new=True,
+        )
+
+        claimed_created = db.claim_job(created_job["id"], "hermes-dispatcher", profile=db.hermes_profile())
+        db.complete_job(
+            claimed_created["id"],
+            claimed_created["claim_token"],
+            result={"status": "succeeded", "created": [{"kit_id": "kit_created"}]},
+        )
+        claimed_blocked = db.claim_job(blocked_job["id"], "hermes-dispatcher", profile=db.hermes_profile())
+        db.block_job(
+            claimed_blocked["id"],
+            claimed_blocked["claim_token"],
+            error="no green candidate",
+            result={"status": "blocked", "created": []},
+        )
+
+        summary_payload = db.review_schedule_status(now=now)
+        yourrage = next(item for item in summary_payload["campaigns"] if item["campaign_slug"] == "yourrage")
+        self.assertEqual(summary_payload["generated_today"], 1)
+        self.assertEqual(yourrage["generated_today"], 1)
+
+    def test_rejecting_review_kit_creates_learning_signal_not_revision_job(self):
+        from clipping_ops_backend.server import reject_review_kit
+
+        kit_id = self.make_publishable_kit(approved=False, is_demo=False)
+        before_revision_jobs = db.rows("SELECT * FROM job_runs WHERE name='review-kit-revision'")
+        result = reject_review_kit(kit_id, "bad clip selection; captions were early", tags=["bad_clip_selection", "caption_timing"])
+        self.assertEqual(result["review_status"], "rejected_learning_signal")
+
+        signals = db.review_learning_signals()
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0]["kit_id"], kit_id)
+        self.assertEqual(signals[0]["campaign_slug"], "yourrage")
+        self.assertIn("caption_timing", signals[0]["reason_tags"])
+
+        after_revision_jobs = db.rows("SELECT * FROM job_runs WHERE name='review-kit-revision'")
+        self.assertEqual(len(after_revision_jobs), len(before_revision_jobs))
+
+    def test_minimax_hermes_status_requires_minimax_profile_provider_and_model(self):
+        required_cron_jobs = [
+            {"name": name, "profile": "clipping-ops-minimax", "enabled": True}
+            for name in db.REQUIRED_CLIPPING_HERMES_CRON_JOBS
+        ]
+        ready = db.minimax_hermes_status(
+            selected_profile="clipping-ops-minimax",
+            provider="MiniMax",
+            model="MiniMax-M3",
+            cron_jobs=required_cron_jobs,
+            available=True,
+            auth_degraded=False,
+        )
+        self.assertEqual(ready["status"], "green")
+
+        wrong_provider = db.minimax_hermes_status(
+            selected_profile="default",
+            provider="OpenAI Codex",
+            model="gpt-5.5",
+            cron_jobs=required_cron_jobs,
+            available=True,
+            auth_degraded=False,
+        )
+        self.assertEqual(wrong_provider["status"], "red")
+        self.assertIn("MiniMax", " ".join(wrong_provider["blockers"]))
+
+    def test_minimax_hermes_status_rejects_null_profile_or_missing_scheduler_cron(self):
+        null_profile_jobs = [
+            {"name": name, "profile": None, "enabled": True}
+            for name in db.REQUIRED_CLIPPING_HERMES_CRON_JOBS
+        ]
+        null_profile = db.minimax_hermes_status(
+            selected_profile="clipping-ops-minimax",
+            provider="MiniMax",
+            model="MiniMax-M3",
+            cron_jobs=null_profile_jobs,
+            available=True,
+            auth_degraded=False,
+        )
+        self.assertEqual(null_profile["status"], "yellow")
+        self.assertIn("must run under clipping-ops-minimax", " ".join(null_profile["blockers"]))
+
+        missing_scheduler = [
+            {"name": name, "profile": "clipping-ops-minimax", "enabled": True}
+            for name in db.REQUIRED_CLIPPING_HERMES_CRON_JOBS
+            if name != "clip-ops scheduler tick"
+        ]
+        missing = db.minimax_hermes_status(
+            selected_profile="clipping-ops-minimax",
+            provider="MiniMax",
+            model="MiniMax-M3",
+            cron_jobs=missing_scheduler,
+            available=True,
+            auth_degraded=False,
+        )
+        self.assertEqual(missing["status"], "yellow")
+        self.assertIn("clip-ops scheduler tick", " ".join(missing["blockers"]))
+
+        missing_key = db.minimax_hermes_status(
+            selected_profile="clipping-ops-minimax",
+            provider="MiniMax",
+            model="MiniMax-M3",
+            cron_jobs=[
+                {"name": name, "profile": "clipping-ops-minimax", "enabled": True}
+                for name in db.REQUIRED_CLIPPING_HERMES_CRON_JOBS
+            ],
+            available=True,
+            auth_degraded=False,
+            api_key_configured=False,
+        )
+        self.assertEqual(missing_key["status"], "red")
+        self.assertIn("API key", " ".join(missing_key["blockers"]))
+
+    def test_scheduler_proof_requires_minimax_profile_scheduled_job(self):
+        payload = {
+            "campaign_slug": "yourrage",
+            "limit": 1,
+            "style": db.CAMPAIGN_SHORT_PROFILE,
+            "freshness_ladder_hours": list(db.FRESHNESS_LADDER_HOURS),
+        }
+        db.create_job_intent(
+            "scheduled_campaign_review_build",
+            payload,
+            campaign_slug="yourrage",
+            requested_by="review-scheduler",
+            hermes_profile_name="default",
+            force_new=True,
+        )
+        wrong_profile = db.scheduled_review_factory_proof_status()
+        self.assertFalse(wrong_profile["ready"])
+        self.assertEqual(wrong_profile["matching_count"], 0)
+
+        db.create_job_intent(
+            "scheduled_campaign_review_build",
+            payload,
+            campaign_slug="yourrage",
+            requested_by="review-scheduler",
+            hermes_profile_name="clipping-ops-minimax",
+            force_new=True,
+        )
+        ready = db.scheduled_review_factory_proof_status()
+        self.assertTrue(ready["ready"])
+        self.assertEqual(ready["matching_count"], 1)
+
+    def test_hermes_caption_alignment_intent_runs_ensemble_retimer(self):
+        from script import hermes_job_dispatcher as dispatcher
+
+        with mock.patch(
+            "script.hermes_job_dispatcher.run_caption_alignment_command",
+            return_value={"status": "succeeded", "command": ["python", "script/ensemble_retime_review_kits.py", "--clip-id", "clip_sync_test"]},
+            create=True,
+        ) as run:
+            result = dispatcher.execute_job(
+                {
+                    "intent": "retime_review_kit_captions",
+                    "payload": {"clip_id": "clip_sync_test", "min_votes": 3},
+                    "campaign_slug": "yourrage",
+                }
+            )
+
+        self.assertEqual(result["status"], "succeeded")
+        command = run.return_value["command"]
+        self.assertIn("ensemble_retime_review_kits.py", " ".join(command))
+        self.assertIn("--clip-id", command)
+        self.assertIn("clip_sync_test", command)
+
+    def test_hermes_dispatcher_lock_reports_existing_worker(self):
+        from script import hermes_job_dispatcher as dispatcher
+
+        with mock.patch("script.hermes_job_dispatcher.fcntl.flock", side_effect=BlockingIOError):
+            with dispatcher.dispatch_lock() as lock_path:
+                self.assertIsNone(lock_path)
+
+    def test_ensemble_retimer_uses_same_index_votes_for_short_asr_disagreements(self):
+        from script import ensemble_retime_review_kits as retimer
+
+        canonical_targets = [
+            {"target_index": 1, "text": "WHAT IS", "start": 0.10, "end": 0.34, "words": ["What", "is"]},
+            {"target_index": 2, "text": "THIS LINK", "start": 0.40, "end": 0.72, "words": ["this", "link"]},
+            {"target_index": 3, "text": "BRO", "start": 0.78, "end": 0.98, "words": ["bro"]},
+        ]
+        noisy_words = [
+            {"word": "Where", "start": 0.11, "end": 0.23},
+            {"word": "it", "start": 0.24, "end": 0.35},
+            {"word": "those", "start": 0.43, "end": 0.55},
+            {"word": "lane", "start": 0.56, "end": 0.75},
+            {"word": "bruh", "start": 0.80, "end": 1.00},
+        ]
+
+        votes = retimer.model_votes_for_targets(
+            "faster_whisper_small_en",
+            noisy_words,
+            [str(target["text"]) for target in canonical_targets],
+            canonical_targets=canonical_targets,
+        )
+
+        self.assertEqual([vote["match_mode"] for vote in votes], ["same_index_temporal_anchor"] * 3)
+        self.assertEqual([vote["text"] for vote in votes], ["WHAT IS", "THIS LINK", "BRO"])
+        self.assertLessEqual(abs(float(votes[0]["start"]) - float(canonical_targets[0]["start"])), 0.05)
+
+    def test_ensemble_retimer_prefers_majority_supported_canonical_source(self):
+        from script import ensemble_retime_review_kits as retimer
+
+        def timed_words(tokens, offset=0.0, gap_after=None):
+            gap_after = set(gap_after or [])
+            cursor = offset
+            words = []
+            for index, token in enumerate(tokens):
+                start = cursor
+                end = start + 0.16
+                words.append({"word": token, "start": round(start, 3), "end": round(end, 3)})
+                cursor = end + (0.46 if index in gap_after else 0.06)
+            return words
+
+        majority = ["Wait", "that", "is", "not", "extra", "Emily", "bear"]
+        outlier = ["Bitch.", "homie", "I'm", "a", "bitch", "I'm", "a", "bitch", "that", "is", "not", "extra", "Emily", "bam"]
+        source_word_sets = {
+            "faster_whisper": timed_words(majority, offset=0.00, gap_after={0}),
+            "faster_whisper_base_en": timed_words(majority, offset=0.02, gap_after={0}),
+            "faster_whisper_small_en": timed_words(majority, offset=0.01, gap_after={0}),
+            "faster_whisper_medium_en": timed_words(outlier, offset=0.00, gap_after={0}),
+            "faster_whisper_distil_medium_en": timed_words(majority, offset=0.015, gap_after={0}),
+        }
+
+        canonical = retimer.preferred_canonical_source(source_word_sets, min_votes=3)
+
+        self.assertEqual(canonical, "faster_whisper_distil_medium_en")
+
+    def test_ensemble_retimer_rejects_truncated_existing_source_as_canonical(self):
+        from script import ensemble_retime_review_kits as retimer
+
+        def timed_words(tokens, offset=0.0):
+            cursor = offset
+            words = []
+            for token in tokens:
+                start = cursor
+                end = start + 0.14
+                words.append({"word": token, "start": round(start, 3), "end": round(end, 3)})
+                cursor = end + 0.06
+            return words
+
+        full = [
+            "this",
+            "clip",
+            "has",
+            "enough",
+            "words",
+            "for",
+            "the",
+            "ensemble",
+            "to",
+            "agree",
+            "without",
+            "using",
+            "the",
+            "tiny",
+            "old",
+            "caption",
+            "as",
+            "the",
+            "source",
+            "truth",
+        ]
+        source_word_sets = {
+            "faster_whisper": timed_words(["tiny", "old", "caption"]),
+            "faster_whisper_base_en": timed_words(full, offset=0.00),
+            "faster_whisper_small_en": timed_words(full, offset=0.01),
+            "faster_whisper_medium_en": timed_words(full, offset=0.02),
+            "faster_whisper_distil_medium_en": timed_words(full, offset=0.015),
+        }
+
+        canonical = retimer.preferred_canonical_source(source_word_sets, min_votes=3)
+
+        self.assertEqual(canonical, "faster_whisper_distil_medium_en")
 
     def test_visible_surface_hides_demo_and_old_feeder_clip(self):
         local_clip = db.upsert_clip(Path(self._tmp.name) / "demo.mp4", "Demo Review Kit", 3.0)
@@ -752,6 +1943,14 @@ class BackendSmokeTests(unittest.TestCase):
             datetime.fromtimestamp(1_800_000_000, timezone.utc).isoformat(),
         )
 
+    def test_visible_render_kits_use_sidecar_proof_without_live_ffprobe(self):
+        kit_id = self.make_publishable_kit(approved=False)
+
+        with mock.patch.object(db, "_actual_review_video_ok", side_effect=AssertionError("live ffprobe should not run")):
+            visible = db.visible_render_kits()
+
+        self.assertIn(kit_id, [item["id"] for item in visible])
+
     def test_auth_status_shape(self):
         payload = all_status()
         self.assertIn("twitch", payload["providers"])
@@ -801,6 +2000,22 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertIn("haste", excluded_slugs)
         haste = next(item for item in excluded if item["slug"] == "haste")
         self.assertIn("content generation", haste["reason"])
+
+    def test_campaign_project_records_use_sidecar_proof_without_live_ffprobe(self):
+        self.make_publishable_kit(approved=False)
+
+        with mock.patch.object(db, "_actual_review_video_ok", side_effect=AssertionError("live ffprobe should not run")):
+            projects = db.campaign_project_records()
+
+        yourrage = next(item for item in projects if item["slug"] == "yourrage")
+        self.assertGreaterEqual(yourrage["rendered_count"], 1)
+
+    def test_readiness_report_keeps_live_video_verification(self):
+        self.make_publishable_kit(approved=False)
+
+        with mock.patch.object(db, "_actual_review_video_ok", side_effect=AssertionError("readiness must live-verify video")):
+            with self.assertRaises(AssertionError):
+                db.readiness_report()
 
     def test_haste_is_excluded_without_linked_media(self):
         from clipping_ops_backend.server import discover_campaign_sources, build_campaign_reviews

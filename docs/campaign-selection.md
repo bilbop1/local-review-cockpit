@@ -55,6 +55,24 @@ A source is not verified because a title exists. Production candidates require:
 
 Metadata-only candidates can remain indexed, but they cannot count as review proof.
 
+## Fresh Clip Indexing
+
+For active streamer campaigns, index fresh supply in this exact order:
+
+1. Last 24 hours.
+2. Last 48 hours if 24h is empty, stale, or too thin.
+3. Last 72 hours if 48h is still thin.
+4. Last 4 days.
+5. Last 5 days.
+
+Do not use the old 35-day top-recent sweep as normal production proof. It is an emergency/manual research fallback only. Rank candidates by views, freshness, campaign fit, hook strength, source quality, duplicate avoidance, and recent rejection-learning penalties.
+
+Top-card copy is gated before render. A campaign kit must use a hook shaped like streamer/person + situation + tension, and the deterministic gate blocks generic chat filler, quote dumps, raw-title echoes, duplicates from the recent campaign queue, internal labels, and hooks that are too short or too long. `blocked_hook_quality` means Hermes should pick a better candidate or propose better hook copy; it is not permission to hand-curate the same bad card into Review Kits.
+
+## Daily Review Factory
+
+Default production rhythm is three active campaigns, one review kit per campaign every three hours, capped at eight kits per campaign and 24 total per local day. The operator is expected to approve some and kill others with notes. Killed kits are learning signal for the next cycle, not drafts to polish.
+
 ## Editorial Floors
 
 Default floors until the operator changes them:

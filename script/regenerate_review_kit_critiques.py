@@ -23,7 +23,7 @@ LIVE_RENDER_ROOT = APP_HOME / "render_kits"
 DEMO_RENDER_ROOT = APP_HOME / "demo_render_kits"
 LEGACY_DEMO_RENDER_ROOT = ROOT / ".no-key-home" / "demo_render_kits"
 OUT_DIR = ROOT / "artifacts" / "review-kit-audit"
-GUI_MANIFEST = ROOT / "artifacts" / "desktop-qa" / "manifest.json"
+GUI_MANIFEST = ROOT / "artifacts" / "web-qa" / "manifest.json"
 REFERENCE_RUBRIC = [
     "Punchy headline in a white rounded card near the top safe zone.",
     "Central vertical source framing with blurred or extended side fill when the source is narrow.",

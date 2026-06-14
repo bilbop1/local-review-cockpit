@@ -2,8 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LABEL="com.bilbop.ClippingOpsCockpit.app"
+LABEL="com.bilbop.ClippingOpsCockpit.web"
+LEGACY_LABEL="com.bilbop.ClippingOpsCockpit.app"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LEGACY_PLIST="$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist"
 WEB_URL="${CLIPPING_OPS_WEB_URL:-http://127.0.0.1:8765/app}"
 APP_SUPPORT="$HOME/Library/Application Support/ClippingOpsCockpit"
 LOG_DIR="$APP_SUPPORT/logs"
@@ -74,6 +76,8 @@ cat >"$PLIST" <<PLIST
 </plist>
 PLIST
 
+launchctl bootout "gui/$(id -u)" "$LEGACY_PLIST" >/dev/null 2>&1 || true
+rm -f "$LEGACY_PLIST"
 launchctl bootout "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 launchctl enable "gui/$(id -u)/$LABEL"
@@ -89,10 +93,10 @@ for _ in {1..40}; do
 done
 
 if [[ "$app_ready" == "1" ]]; then
-  echo "App LaunchAgent installed and web cockpit is reachable: $WEB_URL"
+  echo "Web cockpit LaunchAgent installed and reachable: $WEB_URL"
   exit 0
 fi
 
-echo "App LaunchAgent failed readiness. See $LOG_DIR/app.launchd.wrapper.log" >&2
+echo "Web cockpit LaunchAgent failed readiness. See $LOG_DIR/app.launchd.wrapper.log" >&2
 tail -n 80 "$LOG_DIR/app.launchd.wrapper.log" >&2 || true
 exit 1

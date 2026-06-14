@@ -52,6 +52,39 @@ TWITCH_SWEEP_LOOKBACK_DAYS = 35
 TWITCH_SWEEP_WINDOW_DAYS = 7
 TWITCH_SWEEP_FIRST = 100
 TWITCH_SWEEP_STORE_LIMIT = 25
+TWITCH_FRESH_WINDOW_HOURS = (24, 48, 72, 96, 120)
+
+
+def _parse_twitch_datetime(raw: Any) -> Optional[datetime]:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _clip_freshness_window_hours(clip: Mapping[str, Any], now: datetime, fallback_hours: int) -> int:
+    created_at = _parse_twitch_datetime(clip.get("created_at") or clip.get("clip_created_at"))
+    if not created_at:
+        return fallback_hours
+    age_seconds = max(0.0, (now.astimezone(timezone.utc) - created_at).total_seconds())
+    age_hours = int((age_seconds + 3599) // 3600)
+    for window in db.QUOTA_RECOVERY_FRESHNESS_LADDER_HOURS:
+        if age_hours <= window:
+            return int(window)
+    return fallback_hours
+
+
+def _stored_clip_window_hours(clip: Mapping[str, Any], selected_window: int) -> int:
+    try:
+        return int(clip.get("freshness_window_hours", 0) or selected_window or 0)
+    except (TypeError, ValueError):
+        return int(selected_window or 0)
 
 
 def _json_excerpt(payload: Any) -> str:
@@ -241,16 +274,18 @@ def twitch_clip_supply_windows(broadcaster_id: str, *, lookback_days: int = TWIT
             key = str(clip.get("url") or clip.get("id") or "")
             if not key:
                 continue
+            enriched = dict(clip)
+            enriched["freshness_window_hours"] = _clip_freshness_window_hours(enriched, now, lookback_days * 24)
             existing = deduped.get(key)
-            if not existing or int(clip.get("view_count", 0) or 0) > int(existing.get("view_count", 0) or 0):
-                deduped[key] = clip
+            if not existing or int(enriched.get("view_count", 0) or 0) > int(existing.get("view_count", 0) or 0):
+                deduped[key] = enriched
     sorted_clips = sorted(
         deduped.values(),
         key=lambda item: (
-            int(item.get("view_count", 0) or 0),
-            -abs(float(item.get("duration", 0) or 0) - 30.0),
+            int(item.get("freshness_window_hours", lookback_days * 24) or lookback_days * 24),
+            -int(item.get("view_count", 0) or 0),
+            abs(float(item.get("duration", 0) or 0) - 30.0),
         ),
-        reverse=True,
     )
     succeeded = any(window.get("status") == "succeeded" for window in windows)
     return {
@@ -259,6 +294,76 @@ def twitch_clip_supply_windows(broadcaster_id: str, *, lookback_days: int = TWIT
         "windows": windows,
         "clip_count": len(sorted_clips),
         "lookback_days": lookback_days,
+        "mode": "emergency_35_day_fallback",
+    }
+
+
+def twitch_fresh_clip_supply_ladder(
+    broadcaster_id: str,
+    *,
+    min_candidates: int = 1,
+    now: Optional[datetime] = None,
+    freshness_ladder_hours: Iterable[int] | None = None,
+) -> Dict[str, Any]:
+    current = now or datetime.now(timezone.utc)
+    deduped: Dict[str, Dict[str, Any]] = {}
+    windows: list[Dict[str, Any]] = []
+    fallback_reasons: list[str] = []
+    selected_window = 0
+    ladder = tuple(int(item) for item in (freshness_ladder_hours or TWITCH_FRESH_WINDOW_HOURS))
+    for hours in ladder:
+        started = current - timedelta(hours=hours)
+        params = {
+            "broadcaster_id": broadcaster_id,
+            "first": TWITCH_SWEEP_FIRST,
+            "started_at": started.isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "ended_at": current.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        }
+        result = twitch_get("clips", params)
+        clip_rows = result.get("data", {}).get("data", []) if result.get("status") == "succeeded" else []
+        for clip in clip_rows:
+            key = str(clip.get("url") or clip.get("id") or "")
+            if not key:
+                continue
+            existing = deduped.get(key)
+            if not existing or int(clip.get("view_count", 0) or 0) > int(existing.get("view_count", 0) or 0):
+                enriched = dict(clip)
+                enriched["freshness_window_hours"] = hours
+                deduped[key] = enriched
+        windows.append(
+            {
+                "window_hours": hours,
+                "started_at": params["started_at"],
+                "ended_at": params["ended_at"],
+                "status": result.get("status"),
+                "count": len(clip_rows),
+                "deduped_count": len(deduped),
+                "check_id": result.get("check_id", ""),
+            }
+        )
+        if len(deduped) >= max(1, min_candidates):
+            selected_window = hours
+            break
+        fallback_reasons.append(f"{hours}h returned {len(clip_rows)} clip(s), below minimum {max(1, min_candidates)}")
+    sorted_clips = sorted(
+        deduped.values(),
+        key=lambda item: (
+            int(item.get("view_count", 0) or 0),
+            str(item.get("created_at", "")),
+            -abs(float(item.get("duration", 0) or 0) - 30.0),
+        ),
+        reverse=True,
+    )
+    succeeded = bool(sorted_clips)
+    return {
+        "status": "succeeded" if succeeded else "blocked",
+        "data": {"data": sorted_clips},
+        "windows": windows,
+        "clip_count": len(sorted_clips),
+        "selected_window_hours": selected_window or (windows[-1]["window_hours"] if windows else 0),
+        "freshness_ladder_hours": list(ladder),
+        "fallback_reasons": fallback_reasons,
+        "mode": "freshness_ladder",
     }
 
 
@@ -273,14 +378,27 @@ def _store_twitch_clip_candidates(
     clips = clips_result.get("data", {}).get("data", []) if clips_result.get("status") == "succeeded" else []
     creator_id = str(users[0].get("id", "")) if users else ""
     stored: list[str] = []
-    sorted_clips = sorted(clips, key=lambda item: int(item.get("view_count", 0) or 0), reverse=True)
+    selected_window = int(clips_result.get("selected_window_hours", 0) or 0)
+    sorted_clips = sorted(
+        clips,
+        key=lambda item: (
+            _stored_clip_window_hours(item, selected_window) or 999999,
+            -int(item.get("view_count", 0) or 0),
+            abs(float(item.get("duration", 0) or 0) - 30.0),
+        ),
+    )
     for index, clip in enumerate(sorted_clips[:TWITCH_SWEEP_STORE_LIMIT], start=1):
         clip_url = str(clip.get("url") or clip.get("embed_url") or "")
         if not clip_url:
             continue
         flags = [risk_flag or f"selected_feeder_{login.lower()}", "metadata_only_no_download"]
-        if index <= 10:
-            flags.append("editorial_indexed_top_recent")
+        clip_window = _stored_clip_window_hours(clip, selected_window)
+        if index <= 10 or (clip_window and clip_window <= 120):
+            flags.append("editorial_indexed_top_fresh")
+            if clip_window:
+                flags.append(f"fresh_window_{clip_window}h")
+        if clip_window == 24:
+            flags.append("top_24h_candidate")
         stored.append(
             db.upsert_clip_candidate(
                 {
@@ -326,10 +444,11 @@ def selected_feeder_sweep() -> Dict[str, Any]:
         if data:
             broadcaster_id = str(data[0].get("id", ""))
             streams = twitch_get("streams", {"user_id": broadcaster_id})
-            clips = twitch_clip_supply_windows(broadcaster_id)
+            clips = twitch_fresh_clip_supply_ladder(broadcaster_id, min_candidates=1)
             row["streams"] = streams.get("status")
             row["clips"] = clips.get("status")
-            row["lookback_days"] = clips.get("lookback_days", TWITCH_SWEEP_LOOKBACK_DAYS)
+            row["selected_window_hours"] = clips.get("selected_window_hours", 0)
+            row["freshness_ladder_hours"] = clips.get("freshness_ladder_hours", list(TWITCH_FRESH_WINDOW_HOURS))
             row["clip_count"] = clips.get("clip_count", 0)
             row["windows"] = clips.get("windows", [])
             row["stored"] = _store_twitch_clip_candidates(
@@ -350,7 +469,11 @@ def selected_feeder_sweep() -> Dict[str, Any]:
                     "availability_status": "reachable",
                     "latest_check_id": users.get("check_id", ""),
                     "risk_flags": [str(feeder["risk_flag"])],
-                    "notes": f"Streamer-first campaign sweep through Twitch Helix over rolling {clips.get('lookback_days', TWITCH_SWEEP_LOOKBACK_DAYS)}-day weekly windows. Clip candidates are metadata-only until a source download route is validated.",
+                    "notes": (
+                        "Streamer-first campaign sweep through Twitch Helix freshness ladder "
+                        f"24h->48h->72h->4d->5d; selected window {clips.get('selected_window_hours', 0)}h. "
+                        "Clip candidates are metadata-only until a source download route is validated."
+                    ),
                 }
             )
         else:

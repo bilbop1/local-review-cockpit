@@ -40,12 +40,13 @@ These constraints intentionally create faster beat timing. That is expected. The
 ## Timing Rules
 
 - Caption beats must be built from word-level transcript timing when available.
-- The renderer late-pops each beat near the actual spoken word, then applies the configured audio sync delay. Do not globally shift captions earlier to make them “feel faster.”
-- Ensemble-consensus captions are not exempt from render-time sync delay. Even if multiple transcript models agree, the final burned overlay must still pass through `apply_caption_audio_sync_delay()`.
+- Caption display start must land on the aligned first spoken word. The production tolerance is strict: no more than about 0.04s early and 0.08s late relative to `source_start`.
+- `CAPTION_AUDIO_SYNC_DELAY_SECONDS` is calibrated to `0.0`. Do not add a global subtitle delay to compensate for bad transcripts; fix alignment instead.
+- Ensemble-consensus captions are already aligned display windows. Do not apply a second render-time delay after consensus/strong-anchor timing is selected.
 - Suspicious long word spans must be capped near the word end before grouping. A token like `shit` lasting several seconds is almost always an ASR timing artifact, and using its raw start will make the subtitle appear early.
 - Caption groups must split across real pauses. Do not keep two words together if the gap between their word timings exceeds the caption gap limit.
-- One-vote or high-spread timing beats should be dropped, rebuilt, or rejected for revision. They must not be forced through just to keep a video count high.
-- A timing fix is not accepted until `script/verify_burned_in_captions.py` passes and a human watch-through does not catch captions leading the audio.
+- One-vote or high-spread timing beats should be dropped, rebuilt, or killed with learning notes. They must not be forced through just to keep a video count high.
+- A timing fix is not accepted until `script/verify_burned_in_captions.py` passes and a human watch-through does not catch captions leading or lagging the audio.
 - If a clip has unreliable transcript timing, reject or rebuild the transcript instead of forcing the render through.
 - Sidecar captions are not enough. The verifier must inspect burned-in pixels from `review.mp4`.
 

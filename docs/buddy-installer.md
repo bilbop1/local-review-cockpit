@@ -16,7 +16,7 @@ Clone the public GitHub source repo and build locally:
 https://github.com/bilbop1/local-review-cockpit
 ```
 
-`script/package_codex_handoff.sh` remains available for a private offline source snapshot, but GitHub clone is the normal path. Source-build setup does not require Developer ID signing or notarization. Apple signing/notarization only matters for a prebuilt `.app` handed to a normal Mac user outside the Codex rebuild workflow.
+`script/package_codex_handoff.sh` remains available for a private offline source snapshot, but GitHub clone is the normal path. Source-build setup does not require Developer ID signing or notarization because the supported UI is the local web cockpit, not a prebuilt native app.
 
 The originating operator approved the current active validated review batch for manual prep before publishing this source repo. The repository still does not include those review videos or source media.
 

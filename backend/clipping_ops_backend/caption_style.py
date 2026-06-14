@@ -23,9 +23,11 @@ CAPTION_MIN_WORD_DURATION = 0.06
 CAPTION_MIN_VTT_WORD_DURATION = 0.12
 CAPTION_SINGLE_WORD_WINDOW_SECONDS = 0.44
 CAPTION_TWO_WORD_WINDOW_SECONDS = 0.58
-CAPTION_AUDIO_SYNC_DELAY_SECONDS = 0.26
+CAPTION_AUDIO_SYNC_DELAY_SECONDS = 0.0
 CAPTION_AUDIO_LEAD_RATIO = 0.58
-CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS = 0.28
+CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS = 0.04
+CAPTION_MAX_AUDIO_LEAD_SECONDS = 0.04
+CAPTION_MAX_AUDIO_LAG_SECONDS = 0.08
 CAPTION_MAX_WORD_GAP_SECONDS = 0.34
 CAPTION_MAX_WORD_SPAN_SECONDS = 0.72
 
@@ -72,6 +74,8 @@ def caption_style_manifest() -> Dict[str, Any]:
         "audio_sync_delay_seconds": CAPTION_AUDIO_SYNC_DELAY_SECONDS,
         "audio_lead_ratio": CAPTION_AUDIO_LEAD_RATIO,
         "max_pre_audio_lead_seconds": CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS,
+        "max_audio_lead_seconds": CAPTION_MAX_AUDIO_LEAD_SECONDS,
+        "max_audio_lag_seconds": CAPTION_MAX_AUDIO_LAG_SECONDS,
         "max_word_gap_seconds": CAPTION_MAX_WORD_GAP_SECONDS,
         "max_word_span_seconds": CAPTION_MAX_WORD_SPAN_SECONDS,
         "placement": "platform-safe lower third; above TikTok/Reels/Shorts caption and nav UI",
@@ -362,14 +366,12 @@ def caption_display_window_seconds(text: Any) -> float:
 
 
 def caption_start_for_group(raw_start: float, raw_end: float, text: Any) -> float:
-    """Late-pop captions so ASR spans cannot linger ahead of the spoken beat."""
-    display_window = caption_display_window_seconds(text)
-    lead_window = min(display_window * CAPTION_AUDIO_LEAD_RATIO, CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS)
-    return max(float(raw_start), float(raw_end) - lead_window)
+    """Start captions on the aligned first spoken word."""
+    return max(0.0, float(raw_start))
 
 
 def apply_caption_audio_sync_delay(start: float, end: float) -> tuple[float, float]:
-    """Shift display windows later when rendered captions visually lead the audio."""
+    """Apply the calibrated render sync offset."""
     shifted_start = max(0.0, float(start) + CAPTION_AUDIO_SYNC_DELAY_SECONDS)
     shifted_end = max(shifted_start + 0.12, float(end) + CAPTION_AUDIO_SYNC_DELAY_SECONDS)
     return shifted_start, shifted_end

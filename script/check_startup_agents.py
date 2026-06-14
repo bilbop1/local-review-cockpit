@@ -13,7 +13,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "artifacts" / "startup" / "startup-agents.json"
 BACKEND_LABEL = "com.bilbop.ClippingOpsCockpit.backend"
-APP_LABEL = "com.bilbop.ClippingOpsCockpit.app"
+APP_LABEL = "com.bilbop.ClippingOpsCockpit.web"
 WEB_APP = "http://127.0.0.1:8765/app"
 
 

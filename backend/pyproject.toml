@@ -1,6 +1,6 @@
 [project]
 name = "clipping-ops-backend"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local control API and media workers for Clipping Ops Cockpit"
 requires-python = ">=3.10"
 dependencies = [

@@ -24,9 +24,8 @@ That command verifies the source-build clone without requiring secrets. Missing 
 
 - A React/Vite browser cockpit in `web/`, served locally at `http://127.0.0.1:8765/app`.
 - A Python backend in `backend/clipping_ops_backend` with SQLite-backed state, render queue handling, platform models, credentials helpers, publish gates, and local API routes.
-- A legacy SwiftPM macOS cockpit in `Sources/ClippingOpsCockpit`, preserved as reference only during the web migration.
 - Hermes prompt files in `hermes/` for research, review, and ops work.
-- Scripts for setup, smoke tests, optional desktop QA, release checks, render validation, source reconciliation, and review-kit generation.
+- Scripts for setup, smoke tests, headless web QA, render validation, source reconciliation, and review-kit generation.
 - Operator docs for startup, safety gates, OAuth setup, caption style, Discord handoff, incoming agent setup, and release readiness.
 
 ## Why It Exists
@@ -75,17 +74,16 @@ That starts Vite at `http://127.0.0.1:5173/app` with API proxying to the local b
 ./script/smoke_test.sh
 ./script/setup_buddy_no_key.sh
 ./script/install_hermes_clip_ops.sh
+./script/configure_minimax_hermes_local.sh
+./script/verify_minimax_hermes.sh
 ./script/store_credentials_keychain.sh
 ./script/install_backend_launch_agent.sh
 ./script/run_ceo_readiness_suite.sh
-./script/verify_release.sh
 ./script/security_scan.py
 ./script/render_demo_kits.sh
 ```
 
-Do not run `python3 script/desktop_qa.py` on an active user desktop unless the operator explicitly approves foreground GUI interaction. The supported UI is the browser cockpit.
-
-`script/package_release.sh` is legacy/separate: Developer ID signing and notarization are only required when distributing a prebuilt native `.app`, not for this source-build web cockpit.
+The supported UI is the browser cockpit. Native Swift/macOS app code has been removed from the repo.
 
 ## Safety Model
 
@@ -94,9 +92,13 @@ Do not run `python3 script/desktop_qa.py` on an active user desktop unless the o
 - No account connection or account rebrand.
 - No real campaign render before the campaign research gate passes.
 - No "ready to post" state without a local preview video.
-- Rejections require notes and create a revision request.
+- Rejections require notes and become future-selection learning signal, not a direct draft revision.
 
 The point is not to make the agent timid. The point is to give it a real lane.
+
+## Daily Review Factory
+
+The supported production rhythm is MiniMax-powered Hermes indexing top streamer clips from the freshest window first: 24h, then 48h, 72h, 4d, and 5d only when the fresher windows are empty or stale. The scheduler queues at most one review kit per active campaign every three hours: three campaigns, eight per campaign, 24 max per local day. The user approves winners and kills weak kits with notes; approvals auto-create publish prep and schedule dry-run validation into the next future local `:14` slot, while kill notes guide the next cycle.
 
 ## Local Data
 

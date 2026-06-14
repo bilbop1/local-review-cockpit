@@ -73,13 +73,15 @@ Stores the local operator's Twitch/Kick/optional Upload-Post values in macOS Key
 ## Hermes Local Checks
 
 ```bash
+./script/configure_minimax_hermes_local.sh
+./script/verify_minimax_hermes.sh
 hermes status
 hermes cron list
 ./script/install_hermes_clip_ops.sh
 PYTHONPATH=backend backend/.venv/bin/python script/hermes_job_dispatcher.py --limit 1 --json
 ```
 
-`install_hermes_clip_ops.sh` is optional convenience. A local Hermes profile must already exist on the operator's machine.
+`install_hermes_clip_ops.sh` installs Clipping Ops jobs under `clipping-ops-minimax` by default. A local Hermes install must already exist on the operator's machine. The MiniMax key must be supplied locally; never paste it into repo files.
 
 ## Queue A Job
 
@@ -90,6 +92,15 @@ curl -s -X POST http://127.0.0.1:8765/api/jobs \
 ```
 
 Queues work through the Hermes-native ledger. Do not bypass this path in normal workflow.
+
+## Review Factory Scheduler
+
+```bash
+curl -s http://127.0.0.1:8765/api/review-schedule
+PYTHONPATH=backend backend/.venv/bin/python script/review_schedule_tick.py --json
+```
+
+Expected normal behavior: scheduler queues due `scheduled_campaign_review_build` jobs only, capped at 8 per campaign and 24 total per local day. Fresh indexing uses 24h first, then 48h, 72h, 4d, and 5d.
 
 ## Caption And Composition Audits
 
@@ -111,4 +122,4 @@ Expected before warm-up/key setup: yellow, key missing, warm-up incomplete, live
 
 ## GUI QA Boundary
 
-Do not run `script/desktop_qa.py` on an active user desktop unless the operator explicitly approves foreground interaction. Prefer `/app` browser checks, API/script proof, and headless browser verification for incoming setup.
+Use `node script/web_browser_qa.mjs` for non-foreground web cockpit QA. There is no supported native desktop harness.
