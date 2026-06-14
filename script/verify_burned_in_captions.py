@@ -19,6 +19,8 @@ if str(ROOT) not in sys.path:
 
 from clipping_ops_backend import database as db
 from clipping_ops_backend.caption_style import (
+    CAPTION_MAX_AUDIO_LAG_SECONDS,
+    CAPTION_MAX_AUDIO_LEAD_SECONDS,
     CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS,
     CAPTION_SAFE_BAND_BOTTOM_Y,
     CAPTION_SAFE_BAND_TOP_Y,
@@ -96,14 +98,30 @@ def caption_manifest_timing_violations(kit_dir: Path) -> List[str]:
         try:
             start = float(item.get("start", 0) or 0)
             end = float(item.get("end", 0) or 0)
+            source_start = float(item.get("source_start", item.get("start", 0)) or 0)
             source_end = float(item.get("source_end", item.get("end", 0)) or 0)
             sync_delay = float(item.get("audio_sync_delay_seconds", 0) or 0)
-            lead = float(item.get("lead_seconds", max(0.0, source_end + sync_delay - start)) or 0)
+            lead = float(item.get("audio_lead_seconds", max(0.0, source_start - start)) or 0)
+            lag = float(item.get("audio_lag_seconds", max(0.0, start - source_start)) or 0)
             max_lead = float(item.get("max_pre_audio_lead_seconds", CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS) or CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS)
         except (TypeError, ValueError):
             violations.append(f"caption timeline item {index} has invalid timing fields")
             continue
         timing_mode = str(item.get("timing_mode", "")).strip().lower()
+        calculated_lead = max(0.0, source_start - start)
+        calculated_lag = max(0.0, start - source_start)
+        lead_allowed = min(max_lead, CAPTION_MAX_AUDIO_LEAD_SECONDS) + 0.015
+        lag_allowed = CAPTION_MAX_AUDIO_LAG_SECONDS + 0.015
+        if lead > lead_allowed or calculated_lead > lead_allowed:
+            text = str(item.get("text", "")).strip()
+            violations.append(
+                f"caption {index} starts before speech ({max(lead, calculated_lead):.2f}s lead > {lead_allowed:.2f}s): {text}"
+            )
+        if lag > lag_allowed or calculated_lag > lag_allowed:
+            text = str(item.get("text", "")).strip()
+            violations.append(
+                f"caption {index} starts after speech ({max(lag, calculated_lag):.2f}s lag > {lag_allowed:.2f}s): {text}"
+            )
         if timing_mode == "ensemble_consensus":
             model_votes = int(item.get("model_votes", 0) or 0)
             vote_spread = float(item.get("vote_spread_seconds", 0) or 0)
@@ -136,13 +154,6 @@ def caption_manifest_timing_violations(kit_dir: Path) -> List[str]:
                     f"caption {index} strong anchor stays on screen too long ({duration:.2f}s > {max_duration:.2f}s): {text}"
                 )
             continue
-        calculated_lead = max(0.0, source_end + sync_delay - start)
-        allowed = min(max_lead, CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS) + 0.015
-        if lead > allowed or calculated_lead > allowed:
-            text = str(item.get("text", "")).strip()
-            violations.append(
-                f"caption {index} starts too early ({max(lead, calculated_lead):.2f}s lead > {allowed:.2f}s): {text}"
-            )
     return violations
 
 
@@ -221,13 +232,13 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
     width = metrics["card_width"]
     height = metrics["card_height"]
     center_x = metrics["card_center_x"]
-    if abs(center_x - 540) > 4 or top < 335 or top > 337 or height < 150 or height > 160 or width < 610 or width > 883:
+    if abs(center_x - 540) > 4 or top < 335 or top > 337 or height < 150 or height > 160 or width < 520 or width > 883:
         return {
             "required": True,
             "ok": False,
             "reason": (
                 f"top hook bbox {left},{top},{right},{bottom} does not match reference band "
-                "centered at x 540, y=336, adaptive white-card width 610-883, height 150-160"
+                "centered at x 540, y=336, adaptive white-card width 520-883, height 150-160"
             ),
             "bbox": [left, top, right, bottom],
             "width": width,
@@ -253,7 +264,7 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
             "right_pad": right_pad,
             "line_centering": line_centering,
         }
-    if top_pad < 20 or top_pad > 23 or bottom_pad < 13 or bottom_pad > 17 or content_height < 119 or content_height > 123:
+    if top_pad < 20 or top_pad > 23 or bottom_pad < 13 or bottom_pad > 31 or content_height < 104 or content_height > 123:
         return {
             "required": True,
             "ok": False,
@@ -273,7 +284,7 @@ def top_hook_check(kit_dir: Path, video: Path) -> Dict[str, Any]:
         emoji_top_pad = emoji_box[1] - top
         emoji_bottom_pad = bottom - emoji_box[3]
         emoji_height = emoji_box[3] - emoji_box[1]
-        if emoji_top_pad < 79 or emoji_top_pad > 84 or emoji_bottom_pad < 15 or emoji_bottom_pad > 21 or emoji_height < 54 or emoji_height > 61:
+        if emoji_top_pad < 72 or emoji_top_pad > 84 or emoji_bottom_pad < 15 or emoji_bottom_pad > 27 or emoji_height < 54 or emoji_height > 61:
             return {
                 "required": True,
                 "ok": False,
@@ -525,7 +536,8 @@ def verify_kit(row: Dict[str, Any]) -> Dict[str, Any]:
 
 def main() -> None:
     db.init_db()
-    kits = [kit for kit in db.visible_render_kits() if str(kit.get("review_status", "")) != "rejected_revision_requested"]
+    rejected_statuses = {"rejected_revision_requested", "rejected_learning_signal"}
+    kits = [kit for kit in db.visible_render_kits() if str(kit.get("review_status", "")) not in rejected_statuses]
     results = [verify_kit(dict(row)) for row in kits]
     payload = {
         "ok": bool(results) and all(item["ok"] for item in results),

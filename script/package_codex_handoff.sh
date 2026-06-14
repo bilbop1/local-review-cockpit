@@ -49,16 +49,16 @@ skip_globs = {
 }
 include_roots = {
     ".codex",
-    "Sources",
     "backend",
     "docs",
     "hermes",
     "script",
     "tests",
+    "web",
 }
 include_files = {
     ".gitignore",
-    "Package.swift",
+    "AGENT_START_HERE.md",
     "README.md",
 }
 forbidden_parts = {
@@ -133,7 +133,7 @@ payload = {
     "excluded": sorted(skip_parts | skip_globs),
     "bad_entries": bad_entries[:50],
     "ok": not bad_entries and len(files) > 0,
-    "note": "For buddy Codex sessions: unzip, install local dependencies, provide their own Twitch/Kick/Upload-Post API keys plus Hermes/Discord config, and build locally. This is not a notarized prebuilt macOS app.",
+    "note": "For buddy Codex sessions: unzip or clone, install local dependencies, provide their own Twitch/Kick/Upload-Post API keys plus Hermes/Discord config, and run the local web cockpit. This is source-build web software, not a native app bundle.",
 }
 manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 print(manifest_path)

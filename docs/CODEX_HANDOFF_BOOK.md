@@ -16,7 +16,7 @@ Repository:
 https://github.com/bilbop1/local-review-cockpit
 ```
 
-This repo is a source-build project, not a media drop and not a prebuilt notarized app. It contains the app, backend, scripts, docs, tests, and Hermes prompts needed to rebuild and operate the same local pipeline without inheriting the original operator's secrets.
+This repo is a source-build project, not a media drop and not a native app bundle. It contains the web cockpit, backend, scripts, docs, tests, and Hermes prompts needed to rebuild and operate the same local pipeline without inheriting the original operator's secrets.
 
 Your job as the incoming session:
 
@@ -54,9 +54,11 @@ That is the low-quota one-command path. If you need the expanded baseline, run:
 ```bash
 ./script/setup_buddy_no_key.sh
 ./script/build_and_run.sh --verify
-swift build
+npm --prefix web run typecheck
+npm --prefix web run build
 PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s tests -v
 ./script/smoke_test.sh
+backend/.venv/bin/python script/web_app_smoke.py
 backend/.venv/bin/python script/security_scan.py
 ```
 
@@ -75,7 +77,7 @@ Clipping Ops Cockpit is a local-first macOS clipping operations appliance.
 
 The intended architecture is:
 
-- Swift macOS GUI: simple human review cockpit.
+- Web cockpit: simple human review cockpit at `http://127.0.0.1:8765/app`.
 - SQLite/backend: source of truth, safety gates, media records, audit log, job ledger, and artifacts.
 - Hermes: normal orchestration layer for campaign refreshes, source discovery, review sweeps, and daily operations.
 - Deterministic scripts: source download, transcription, ffmpeg rendering, validation, packaging, and tests.
@@ -117,7 +119,7 @@ cd local-review-cockpit
 ./script/build_and_run.sh
 ```
 
-No-key mode should show Twitch/Kick/Upload-Post credentials as missing. That is correct. Demo mode can open and render local proof kits; production campaign and publish jobs must block or dry-run until the local operator supplies their own credentials, source access, account warm-up completion, and final confirmations.
+No-key mode should show Twitch/Kick/Upload-Post credentials as missing. That is correct. The local web cockpit should open at `http://127.0.0.1:8765/app`; production campaign and publish jobs must block or dry-run until the local operator supplies their own credentials, source access, account warm-up completion, and final confirmations.
 
 ## Credential Setup Expectations
 
@@ -187,6 +189,10 @@ Current excluded or demoted campaigns:
 - Doublelift: watchlist until fresh status and budget/freshness are reconfirmed.
 
 The canonical campaign-selection standard lives in `docs/campaign-selection.md`. If this book and that file ever differ, use `docs/campaign-selection.md`.
+
+Fresh streamer indexing must use the 24h->48h->72h->4d->5d ladder. The old 35-day top-recent sweep is not normal production proof. The daily review factory target is three active campaigns, one review kit per campaign every three hours, capped at 24 per local day.
+
+MiniMax Hermes is the normal agent lane. Configure the local `clipping-ops-minimax` profile with MiniMax-M3 and run `./script/verify_minimax_hermes.sh` before claiming Hermes-native readiness.
 
 ## Source Verification Rules
 
@@ -270,6 +276,7 @@ Current renderer rules:
 - Output size: 1080x1920.
 - Campaign final renders must include a persistent top summary hook card plus burned-in subtitles.
 - The top hook should create context and tension without spoiling the payoff, matching the TikTok reference direction from `https://www.tiktok.com/t/ZTBDvvEfD/`.
+- Campaign-short renders run a pre-render top-card quality gate. Hooks that are generic, duplicated, raw-title echoes, quote dumps, too short/long, or internally worded block as `blocked_hook_quality` before ffmpeg work starts; Hermes should retry with better hook copy or a better clip candidate instead of relying on Codex to curate cards by hand.
 - The top hook card should visually match the reference: author the white rounded rectangle in 720x1280 source-design space, then upscale it into the 1080x1920 render with the video. Do not draw the hook as crisp native-1080 text. In final output the white card sits at x=99-980, y=336-493 and stays centered. Shorter hooks shrink to the visible text plus reference padding instead of carrying dead white space. In source space, use bundled TikTok Sans Bold at 34px, near-black text at RGB 22/22/22, 40px emoji raised 5px above the text visual top, white-card y=223, visual text y=237, 21px text inset, a 548px source-space text line cap, a 10px two-line gap, visual text width plus roughly 46px card padding, a 587px source-space max card width, a 330px source-space minimum card width, and a 14px card radius. After upscale, apply the top-anchored 5.2% visible-card vertical stretch; do not apply the old half-resolution bicubic softening pass, because it makes the glyph edges lighter and mushier than the TikTok reference. This lands around 51px text, 60px emoji, text y=358, a 15px gap, and a white-card fill whose decoded bbox matches the reference instead of being padded by shadow pixels. The 548px line cap is required so live hooks do not crowd the right card edge. TikTok Sans SemiBold, Avenir Next Demi Bold, and SFNS Semibold are fallbacks for machines without the bundled bold font; Arial Bold is emergency fallback only. Do not regress to native-1080 Arial, the old small pill-style TikTok ExtraBold overlay, the old 48px fallback, tiny pill cards, dead-space cards, over-softened glyph edges, compressed card/text height, shadow-measured green checks, or loose vertical padding inside the white card.
 - The top hook copy should read like a native human setup card: streamer/person + situation + tension. Avoid stiff report language like "messy detail," "story somehow turned," "proof," "review," or "selected feeder."
 - Top-card parity proof must come from `script/audit_top_card_reference.py` plus `script/audit_live_top_cards.py --refresh`; do not rely on sidecar text or regenerated overlays without decoded `review.mp4` frames.
@@ -287,7 +294,7 @@ Current renderer rules:
 - Ensemble-consensus captions must still receive the render-time visual/audio delay. Do not bypass `apply_caption_audio_sync_delay()` just because multiple transcription models agree.
 - Suspicious long word spans must be capped near the word end before caption grouping, otherwise subtitles can appear early while still passing naive sidecar checks.
 - Big pauses between words must split caption groups. Do not join words across silence just to satisfy the two-word preference.
-- One-vote and high-spread timing beats should be dropped or rejected for revision, not forced into a render.
+- One-vote and high-spread timing beats should be dropped, rebuilt, or killed with learning notes, not forced into a render.
 - The verifier must pass `script/verify_burned_in_captions.py`; sidecar text alone does not prove visible subtitles.
 - Any future caption timing changes must be validated against video pixels and audio, not just JSON.
 
@@ -348,7 +355,7 @@ Important endpoints:
 
 Important artifacts:
 
-- `artifacts/desktop-qa/manifest.json`
+- `artifacts/web-qa/manifest.json`
 - `artifacts/review-kit-audit/latest.json`
 - `artifacts/review-kit-audit/burned-caption-verification.json`
 - `artifacts/review-kit-audit/streamer-composition-verification.json`
@@ -374,7 +381,7 @@ Keep out of git:
 
 You may use `./script/package_codex_handoff.sh` only as a private offline source snapshot fallback. The normal workflow is to work from this GitHub clone.
 
-Developer ID signing and notarization matter only for distributing a prebuilt `.app` to normal Mac users. They are not required for a Codex/Hermes source-build clone.
+Developer ID signing and notarization are no longer part of this repo's supported lane. The product handoff is a source-build local web cockpit plus backend/Hermes scripts.
 
 ## Operating Checklist
 

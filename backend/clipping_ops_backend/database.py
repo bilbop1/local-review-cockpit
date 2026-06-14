@@ -6,14 +6,22 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import time
 import uuid
 import hashlib
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
-from .caption_style import caption_beat_violations, caption_text_quality_violations
+from .caption_style import (
+    CAPTION_MAX_AUDIO_LAG_SECONDS,
+    CAPTION_MAX_AUDIO_LEAD_SECONDS,
+    CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS,
+    caption_beat_violations,
+    caption_text_quality_violations,
+)
+from .hook_quality import hook_quality_violations
 
 
 APP_NAME = "ClippingOpsCockpit"
@@ -34,7 +42,29 @@ CAMPAIGN_SHORT_PROFILE = "campaign_short_final_v1"
 CAMPAIGN_PROJECT_TARGET = 5
 WATERMARK_REQUIRED_CAMPAIGNS = {"plaqueboymax", "jasontheween"}
 LOCAL_MEDIA_READY_FLAGS = {"local_media_downloaded", "source_media_verified_local", "source_download_verified"}
-DEFAULT_HERMES_PROFILE = "default"
+MINIMAX_HERMES_PROFILE = "clipping-ops-minimax"
+MINIMAX_HERMES_PROVIDER = "minimax"
+MINIMAX_HERMES_MODEL = "MiniMax-M3"
+DEFAULT_HERMES_PROFILE = MINIMAX_HERMES_PROFILE
+REQUIRED_CLIPPING_HERMES_CRON_JOBS = (
+    "clip-ops daily brief",
+    "clip-research campaign gate sweep",
+    "clip-review kit risk sweep",
+    "clip-review learning summary",
+    "clip-ops scheduler tick",
+    "clip-ops publish schedule tick",
+    "clip-ops job dispatcher",
+)
+FRESHNESS_LADDER_HOURS = (24, 48, 72, 96, 120)
+QUOTA_RECOVERY_FRESHNESS_LADDER_HOURS = (24, 48, 72, 96, 120, 168, 336, 720, 840)
+REVIEW_SCHEDULE_DAILY_CAP = 24
+REVIEW_SCHEDULE_CAMPAIGN_DAILY_CAP = 8
+REVIEW_SCHEDULE_DAILY_ATTEMPT_CAP = 72
+REVIEW_SCHEDULE_CAMPAIGN_ATTEMPT_CAP = 24
+REVIEW_SCHEDULE_CADENCE_HOURS = 3
+REVIEW_SCHEDULE_BACKLOG_LIMIT = 24
+FAST_PROOF_STATUS_CACHE_TTL_SECONDS = 20.0
+FAST_PROOF_STATUS_CACHE_MAX = 512
 KEYCHAIN_SERVICE = "com.bilbop.ClippingOpsCockpit"
 HERMES_JOB_ACTIVE_STATUSES = ("queued", "claimed", "running")
 HERMES_JOB_TERMINAL_STATUSES = ("succeeded", "blocked", "failed", "cancelled")
@@ -46,10 +76,14 @@ HERMES_JOB_INTENTS = {
     "prepare_publish_package": {"name": "Prepare Publish Package", "kind": "publish", "stage": "queued-for-hermes"},
     "publish_dry_run": {"name": "Publish Dry Run", "kind": "publish", "stage": "queued-for-hermes"},
     "publish_live": {"name": "Publish Live", "kind": "publish", "stage": "queued-for-hermes"},
+    "publish_schedule_tick": {"name": "Publish Schedule Tick", "kind": "publish", "stage": "queued-for-hermes"},
     "publish_status_sweep": {"name": "Publish Status Sweep", "kind": "publish", "stage": "queued-for-hermes"},
     "platform_smoke": {"name": "Run Platform Check", "kind": "platform", "stage": "queued-for-hermes"},
     "selected_feeder_sweep": {"name": "Check Creators", "kind": "platform", "stage": "queued-for-hermes"},
     "review_risk_sweep": {"name": "Review Risk Sweep", "kind": "review", "stage": "queued-for-hermes"},
+    "scheduled_campaign_review_build": {"name": "Scheduled Campaign Review Build", "kind": "render", "stage": "queued-for-hermes"},
+    "retime_review_kit_captions": {"name": "Retime Review Kit Captions", "kind": "render", "stage": "queued-for-hermes"},
+    "review_learning_summary": {"name": "Review Learning Summary", "kind": "review", "stage": "queued-for-hermes"},
 }
 CAMPAIGN_PROJECTS: Dict[str, Dict[str, str]] = {
     "yourrage": {
@@ -224,6 +258,13 @@ EDITORIAL_MIN_VIEWS_BY_CAMPAIGN = {
     "jasontheween": 2_000,
 }
 EDITORIAL_DEFAULT_MIN_VIEWS = 1_500
+EDITORIAL_FRESH_MIN_VIEWS_BY_WINDOW = {
+    24: 5,
+    48: 15,
+    72: 35,
+    96: 75,
+    120: 125,
+}
 EDITORIAL_MAX_DURATION_SECONDS = 52.0
 EDITORIAL_WEAK_TITLE_TOKENS = {
     "",
@@ -260,6 +301,7 @@ LACY_ARREST_OR_MIA_TERMS = (
     "warrant",
     "missing in action",
 )
+_FAST_PROOF_STATUS_CACHE: Dict[str, tuple[float, str, Dict[str, Any]]] = {}
 
 
 def utc_now() -> str:
@@ -406,6 +448,60 @@ def _text_file(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except Exception:
         return ""
+
+
+def _file_signature(path: Path) -> str:
+    try:
+        stat = path.stat()
+    except OSError:
+        return "missing"
+    return f"{stat.st_mtime_ns}:{stat.st_size}"
+
+
+def _fast_proof_cache_fingerprint(kit: Dict[str, Any], nomination: Optional[Dict[str, Any]], kit_dir: Path) -> str:
+    sidecars = (
+        "review.mp4",
+        "ffprobe.json",
+        "render_text_manifest.json",
+        "style_critique.md",
+        "caption.txt",
+        "transcript.txt",
+        "checklist.md",
+        "source.md",
+        "risk.md",
+        "editorial_review.json",
+    )
+    parts = [
+        str(kit.get("id", "")),
+        str(kit.get("nomination_id", "")),
+        str(kit.get("review_status", "")),
+        str(kit.get("is_demo", "")),
+        str(kit.get("review_video_path", "")),
+        str((nomination or {}).get("target_style", "")),
+        str((nomination or {}).get("clip_candidate_ids_json", "")),
+    ]
+    parts.extend(_file_signature(kit_dir / name) for name in sidecars)
+    return "|".join(parts)
+
+
+def _fast_proof_cache_get(kit_id: str, fingerprint: str) -> Optional[Dict[str, Any]]:
+    cached = _FAST_PROOF_STATUS_CACHE.get(kit_id)
+    if not cached:
+        return None
+    cached_at, cached_fingerprint, payload = cached
+    if cached_fingerprint != fingerprint or time.monotonic() - cached_at > FAST_PROOF_STATUS_CACHE_TTL_SECONDS:
+        _FAST_PROOF_STATUS_CACHE.pop(kit_id, None)
+        return None
+    return dict(payload)
+
+
+def _fast_proof_cache_put(kit_id: str, fingerprint: str, payload: Dict[str, Any]) -> None:
+    if not kit_id:
+        return
+    if len(_FAST_PROOF_STATUS_CACHE) >= FAST_PROOF_STATUS_CACHE_MAX:
+        oldest = min(_FAST_PROOF_STATUS_CACHE.items(), key=lambda item: item[1][0])[0]
+        _FAST_PROOF_STATUS_CACHE.pop(oldest, None)
+    _FAST_PROOF_STATUS_CACHE[kit_id] = (time.monotonic(), fingerprint, dict(payload))
 
 
 def _checklist_box_checked(text: str, label: str) -> bool:
@@ -755,6 +851,27 @@ CREATE TABLE IF NOT EXISTS system_settings (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS review_schedule (
+  campaign_slug TEXT PRIMARY KEY,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  cadence_hours INTEGER NOT NULL DEFAULT 3,
+  daily_cap INTEGER NOT NULL DEFAULT 8,
+  last_queued_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS review_learning_signals (
+  id TEXT PRIMARY KEY,
+  kit_id TEXT NOT NULL,
+  campaign_slug TEXT NOT NULL DEFAULT '',
+  clip_id TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL,
+  reason_tags_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'active',
+  consumed_by_job_id TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS publish_packages (
   id TEXT PRIMARY KEY,
   kit_id TEXT NOT NULL UNIQUE,
@@ -857,6 +974,25 @@ def init_db() -> None:
                 VALUES (?, 'system', 'initialize', 'database', 'local', 'created local source of truth', ?, 'startup')
                 """,
                 (new_id("audit"), utc_now()),
+            )
+        stored_profile = conn.execute("SELECT value FROM system_settings WHERE key='hermes_profile'").fetchone()
+        if not stored_profile or str(stored_profile["value"]).strip() in {"", "default"}:
+            conn.execute(
+                """
+                INSERT INTO system_settings (key, value, updated_at)
+                VALUES ('hermes_profile', ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (MINIMAX_HERMES_PROFILE, utc_now()),
+            )
+        for slug in active_campaign_project_slugs():
+            conn.execute(
+                """
+                INSERT INTO review_schedule (campaign_slug, enabled, cadence_hours, daily_cap, updated_at)
+                VALUES (?, 1, ?, ?, ?)
+                ON CONFLICT(campaign_slug) DO NOTHING
+                """,
+                (slug, REVIEW_SCHEDULE_CADENCE_HOURS, REVIEW_SCHEDULE_CAMPAIGN_DAILY_CAP, utc_now()),
             )
 
 
@@ -1181,6 +1317,582 @@ def set_hermes_profile(profile: str) -> str:
     return cleaned
 
 
+def _hermes_cron_jobs_path(profile: str = "") -> Path:
+    if profile and profile != "default":
+        return Path.home() / ".hermes" / "profiles" / profile / "cron" / "jobs.json"
+    return Path.home() / ".hermes" / "cron" / "jobs.json"
+
+
+def minimax_profile_key_configured(profile: str = MINIMAX_HERMES_PROFILE) -> bool:
+    env_path = Path.home() / ".hermes" / "profiles" / profile / ".env"
+    try:
+        for raw in env_path.read_text(encoding="utf-8").splitlines():
+            if not raw.startswith("MINIMAX_API_KEY="):
+                continue
+            return bool(raw.split("=", 1)[1].strip())
+    except Exception:
+        return False
+    return False
+
+
+def clipping_hermes_cron_jobs(path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    paths: List[tuple[Path, str]] = []
+    if path:
+        paths.append((path, ""))
+    else:
+        paths.append((_hermes_cron_jobs_path(), ""))
+        profile_path = _hermes_cron_jobs_path(MINIMAX_HERMES_PROFILE)
+        if profile_path != paths[0][0]:
+            paths.append((profile_path, MINIMAX_HERMES_PROFILE))
+    found: List[Dict[str, Any]] = []
+    for jobs_path, source_profile in paths:
+        try:
+            payload = json.loads(jobs_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for item in payload.get("jobs", []):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            if name not in REQUIRED_CLIPPING_HERMES_CRON_JOBS and not name.lower().startswith("clip-"):
+                continue
+            enabled = bool(item.get("enabled", True)) and str(item.get("state", "")).lower() != "paused"
+            raw_profile = str(item.get("profile") or "")
+            found.append(
+                {
+                    "id": str(item.get("id", "")),
+                    "name": name,
+                    "profile": raw_profile or source_profile,
+                    "raw_profile": raw_profile,
+                    "source_profile": source_profile,
+                    "enabled": enabled,
+                    "state": str(item.get("state", "")),
+                    "schedule": item.get("schedule") or {},
+                    "schedule_display": str(item.get("schedule_display") or item.get("schedule", {}).get("display", "")),
+                    "script": str(item.get("script") or ""),
+                    "last_status": str(item.get("last_status") or ""),
+                }
+            )
+    return found
+
+
+def _normalise_cron_job_records(cron_jobs: Optional[List[Any]]) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    for item in cron_jobs or []:
+        if isinstance(item, dict):
+            name = str(item.get("name", "")).strip()
+            profile_value = item.get("profile", "")
+            records.append(
+                {
+                    "name": name,
+                    "profile": str(profile_value or ""),
+                    "source_profile": str(item.get("source_profile") or ""),
+                    "enabled": bool(item.get("enabled", True)),
+                    "id": str(item.get("id", "")),
+                    "schedule_display": str(item.get("schedule_display", "")),
+                }
+            )
+        else:
+            records.append({"name": str(item), "profile": "", "enabled": True, "id": "", "schedule_display": ""})
+    return records
+
+
+def cron_job_summary_lines(cron_jobs: Optional[List[Any]] = None) -> List[str]:
+    jobs = _normalise_cron_job_records(cron_jobs if cron_jobs is not None else clipping_hermes_cron_jobs())
+    lines: List[str] = []
+    for job in jobs:
+        line = str(job.get("name", ""))
+        bits = []
+        profile = str(job.get("profile", ""))
+        if profile:
+            bits.append(f"profile={profile}")
+        if not bool(job.get("enabled", True)):
+            bits.append("disabled")
+        schedule = str(job.get("schedule_display", ""))
+        if schedule:
+            bits.append(schedule)
+        if bits:
+            line = f"{line}; {'; '.join(bits)}"
+        if line:
+            lines.append(line)
+    return lines
+
+
+def minimax_hermes_status(
+    *,
+    selected_profile: str = "",
+    provider: str = "",
+    model: str = "",
+    cron_jobs: Optional[List[Any]] = None,
+    available: bool = True,
+    auth_degraded: bool = False,
+    api_key_configured: Optional[bool] = None,
+) -> Dict[str, Any]:
+    profile = str(selected_profile or "").strip()
+    provider_text = str(provider or "").strip()
+    model_text = str(model or "").strip()
+    cron_records = _normalise_cron_job_records(cron_jobs)
+    cron_by_name: Dict[str, Dict[str, Any]] = {}
+    for item in cron_records:
+        name = str(item.get("name", ""))
+        existing = cron_by_name.get(name)
+        if not existing or str(item.get("profile", "")) == MINIMAX_HERMES_PROFILE:
+            cron_by_name[name] = item
+    blockers: List[str] = []
+    if not available:
+        blockers.append("Hermes CLI is unavailable.")
+    if auth_degraded:
+        blockers.append("Hermes auth is degraded.")
+    if api_key_configured is False:
+        blockers.append("MiniMax API key is not configured in the Clipping Ops Hermes profile.")
+    if profile != MINIMAX_HERMES_PROFILE:
+        blockers.append(f"Selected Hermes profile must be {MINIMAX_HERMES_PROFILE}.")
+    if "minimax" not in provider_text.lower():
+        blockers.append("Clipping Ops Hermes provider must be MiniMax.")
+    if MINIMAX_HERMES_MODEL.lower() not in model_text.lower():
+        blockers.append(f"Clipping Ops Hermes model must be {MINIMAX_HERMES_MODEL}.")
+    for required in REQUIRED_CLIPPING_HERMES_CRON_JOBS:
+        job = cron_by_name.get(required)
+        if not job:
+            blockers.append(f"{required} cron is not installed.")
+            continue
+        if not bool(job.get("enabled", True)):
+            blockers.append(f"{required} cron is disabled.")
+        if str(job.get("profile", "")) != MINIMAX_HERMES_PROFILE:
+            blockers.append(f"{required} must run under {MINIMAX_HERMES_PROFILE}.")
+        legacy_jobs = [
+            item
+            for item in cron_records
+            if str(item.get("name", "")) == required
+            and str(item.get("source_profile", "")) == ""
+            and str(item.get("profile", "")) != MINIMAX_HERMES_PROFILE
+        ]
+        if legacy_jobs:
+            blockers.append(f"{required} has legacy default cron rows that would still use the default Hermes provider.")
+    hard_red = (
+        not available
+        or auth_degraded
+        or api_key_configured is False
+        or profile != MINIMAX_HERMES_PROFILE
+        or "minimax" not in provider_text.lower()
+        or MINIMAX_HERMES_MODEL.lower() not in model_text.lower()
+    )
+    status = "green" if not blockers else ("red" if hard_red else "yellow")
+    return {
+        "status": status,
+        "ready": status == "green",
+        "profile": profile,
+        "expected_profile": MINIMAX_HERMES_PROFILE,
+        "provider": provider_text,
+        "expected_provider": "MiniMax",
+        "model": model_text,
+        "expected_model": MINIMAX_HERMES_MODEL,
+        "required_cron_jobs": list(REQUIRED_CLIPPING_HERMES_CRON_JOBS),
+        "cron_jobs": cron_records,
+        "blockers": blockers,
+    }
+
+
+def _local_day_key(now: Optional[datetime] = None) -> str:
+    current = now or datetime.now().astimezone()
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone().date().isoformat()
+
+
+def _parse_payload(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _scheduled_jobs_for_day(day_key: str) -> List[Dict[str, Any]]:
+    found: List[Dict[str, Any]] = []
+    for item in rows("SELECT * FROM job_runs WHERE intent='scheduled_campaign_review_build'"):
+        enriched = _job_with_json(item)
+        payload = _parse_payload(enriched.get("payload"))
+        if str(payload.get("schedule_day", "")) == day_key:
+            found.append(enriched)
+    return found
+
+
+def _scheduled_created_count(jobs: List[Dict[str, Any]]) -> int:
+    total = 0
+    for job in jobs:
+        result = _parse_payload(job.get("result"))
+        created = result.get("created", [])
+        if isinstance(created, list):
+            total += len(created)
+    return total
+
+
+def _schedule_rows() -> List[Dict[str, Any]]:
+    init_db()
+    return rows("SELECT * FROM review_schedule ORDER BY campaign_slug")
+
+
+def review_learning_signals(campaign_slug: str = "", limit: int = 100) -> List[Dict[str, Any]]:
+    normalized = normalize_campaign_slug(campaign_slug)
+    query = "SELECT * FROM review_learning_signals"
+    params: List[Any] = []
+    if normalized:
+        query += " WHERE campaign_slug=?"
+        params.append(normalized)
+    query += " ORDER BY created_at DESC LIMIT ?"
+    params.append(max(1, min(int(limit), 500)))
+    signals = []
+    for item in rows(query, tuple(params)):
+        enriched = dict(item)
+        try:
+            enriched["reason_tags"] = json.loads(str(item.get("reason_tags_json", "[]") or "[]"))
+        except json.JSONDecodeError:
+            enriched["reason_tags"] = []
+        signals.append(enriched)
+    return signals
+
+
+def learning_context_for_campaign(campaign_slug: str, limit: int = 8) -> Dict[str, Any]:
+    normalized = normalize_campaign_slug(campaign_slug)
+    signals = review_learning_signals(normalized, limit=limit)
+    avoid_tags: Dict[str, int] = {}
+    notes: List[str] = []
+    for signal in signals:
+        notes.append(str(signal.get("notes", ""))[:280])
+        for tag in signal.get("reason_tags", []):
+            key = str(tag).strip()
+            if key:
+                avoid_tags[key] = avoid_tags.get(key, 0) + 1
+    return {
+        "campaign_slug": normalized,
+        "recent_signal_count": len(signals),
+        "avoid_tags": avoid_tags,
+        "recent_notes": notes,
+    }
+
+
+def record_review_learning_signal(kit_id: str, notes: str, reason_tags: Optional[List[str]] = None) -> Dict[str, Any]:
+    cleaned_notes = str(notes or "").strip()
+    if not cleaned_notes:
+        raise ValueError("notes_required")
+    kit = one("SELECT * FROM render_kits WHERE id = ?", (kit_id,))
+    if not kit:
+        raise ValueError("missing_kit")
+    nomination = one("SELECT * FROM render_nominations WHERE id = ?", (str(kit.get("nomination_id", "")),))
+    campaign_slug = campaign_slug_for_kit(kit, nomination)
+    clip_ids = _clip_ids_for_nomination(nomination)
+    signal_id = new_id("learn")
+    tags = [str(tag).strip() for tag in (reason_tags or []) if str(tag).strip()]
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO review_learning_signals
+              (id, kit_id, campaign_slug, clip_id, notes, reason_tags_json, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
+            """,
+            (signal_id, kit_id, campaign_slug, str(clip_ids[0]) if clip_ids else "", cleaned_notes, json.dumps(tags), utc_now()),
+        )
+        conn.execute(
+            "UPDATE render_kits SET review_status='rejected_learning_signal', rejection_notes=? WHERE id=?",
+            (cleaned_notes, kit_id),
+        )
+    log_audit("user", "record_review_learning_signal", "render_kit", kit_id, "rejected_learning_signal", cleaned_notes)
+    signal = one("SELECT * FROM review_learning_signals WHERE id = ?", (signal_id,))
+    enriched = dict(signal or {})
+    enriched["reason_tags"] = tags
+    return enriched
+
+
+def needs_review_backlog_count() -> int:
+    count = 0
+    for item in rows("SELECT * FROM render_kits WHERE review_status='needs_review' AND is_demo=0"):
+        nomination = one("SELECT * FROM render_nominations WHERE id = ?", (str(item.get("nomination_id", "")),))
+        campaign_slug = campaign_slug_for_kit(item, nomination)
+        if not campaign_slug:
+            continue
+        if contains_irrelevant_review_token(
+            item.get("title"),
+            item.get("review_video_path"),
+            item.get("caption_path"),
+            item.get("transcript_path"),
+            item.get("source_path"),
+            item.get("risk_path"),
+        ):
+            continue
+        video_path = Path(str(item.get("review_video_path", "")))
+        kit_dir = video_path.parent
+        if not video_path.exists():
+            continue
+        base_status = kit_dir_status(item)
+        if base_status.get("missing") or base_status.get("critique_status") != "green":
+            continue
+        if not _ffprobe_contract_ok(kit_dir / "ffprobe.json"):
+            continue
+        if _render_text_manifest_blockers(kit_dir / "render_text_manifest.json"):
+            continue
+        clip_ids = _clip_ids_for_nomination(nomination)
+        if not clip_ids:
+            continue
+        blocked = False
+        for clip_id in clip_ids:
+            clip = one("SELECT * FROM clip_candidates WHERE id = ?", (str(clip_id),))
+            if not clip or editorial_review_for_rendered_kit(clip, kit_dir, campaign_slug, require_sidecar=True).get("status") != "green":
+                blocked = True
+                break
+        if blocked:
+            continue
+        count += 1
+    return count
+
+
+def review_schedule_status(now: Optional[datetime] = None) -> Dict[str, Any]:
+    day_key = _local_day_key(now)
+    scheduled_today = _scheduled_jobs_for_day(day_key)
+    campaigns = []
+    attempted_total = len(scheduled_today)
+    generated_total = _scheduled_created_count(scheduled_today)
+    approved_today = len([item for item in rows("SELECT * FROM render_kits") if str(item.get("approved_at", "")).startswith(day_key)])
+    rejected_today = len([item for item in rows("SELECT * FROM review_learning_signals") if str(item.get("created_at", "")).startswith(day_key)])
+    pending_slugs = {
+        str(item.get("campaign_slug", ""))
+        for item in rows(
+            "SELECT * FROM job_runs WHERE intent='scheduled_campaign_review_build' AND status IN ('queued','claimed','running')"
+        )
+    }
+    for schedule in _schedule_rows():
+        slug = str(schedule.get("campaign_slug", ""))
+        campaign_jobs = [item for item in scheduled_today if str(item.get("campaign_slug", "")) == slug]
+        campaign_generated = _scheduled_created_count(campaign_jobs)
+        last_queued = str(schedule.get("last_queued_at", ""))
+        next_due = ""
+        if last_queued:
+            try:
+                parsed = datetime.fromisoformat(last_queued)
+                next_due = (parsed + timedelta(hours=int(schedule.get("cadence_hours", REVIEW_SCHEDULE_CADENCE_HOURS) or REVIEW_SCHEDULE_CADENCE_HOURS))).isoformat()
+            except ValueError:
+                next_due = ""
+        campaigns.append(
+            {
+                "campaign_slug": slug,
+                "campaign_name": CAMPAIGN_PROJECTS.get(slug, {}).get("name", slug),
+                "enabled": bool(int(schedule.get("enabled", 1) or 0)),
+                "cadence_hours": int(schedule.get("cadence_hours", REVIEW_SCHEDULE_CADENCE_HOURS) or REVIEW_SCHEDULE_CADENCE_HOURS),
+                "daily_cap": int(schedule.get("daily_cap", REVIEW_SCHEDULE_CAMPAIGN_DAILY_CAP) or REVIEW_SCHEDULE_CAMPAIGN_DAILY_CAP),
+                "attempt_cap": REVIEW_SCHEDULE_CAMPAIGN_ATTEMPT_CAP,
+                "generated_today": campaign_generated,
+                "attempted_today": len(campaign_jobs),
+                "pending": slug in pending_slugs,
+                "last_queued_at": last_queued,
+                "next_due_at": next_due,
+                "learning": learning_context_for_campaign(slug, limit=5),
+            }
+        )
+    return {
+        "status": "capped" if generated_total >= REVIEW_SCHEDULE_DAILY_CAP or attempted_total >= REVIEW_SCHEDULE_DAILY_ATTEMPT_CAP else "ready",
+        "day": day_key,
+        "daily_cap": REVIEW_SCHEDULE_DAILY_CAP,
+        "daily_attempt_cap": REVIEW_SCHEDULE_DAILY_ATTEMPT_CAP,
+        "generated_today": generated_total,
+        "attempted_today": attempted_total,
+        "approved_today": approved_today,
+        "rejected_today": rejected_today,
+        "backlog_limit": REVIEW_SCHEDULE_BACKLOG_LIMIT,
+        "needs_review_backlog": needs_review_backlog_count(),
+        "campaigns": campaigns,
+    }
+
+
+def quota_recovery_policy(enabled: bool = True) -> Dict[str, Any]:
+    return {
+        "enabled": bool(enabled),
+        "allow_below_view_floor": bool(enabled),
+        "allow_weak_title": bool(enabled),
+        "allow_pre_download_metadata_source": bool(enabled),
+        "require_local_source_media": True,
+        "require_duration_below_seconds": EDITORIAL_MAX_DURATION_SECONDS,
+        "freshness_ladder_hours": list(QUOTA_RECOVERY_FRESHNESS_LADDER_HOURS if enabled else FRESHNESS_LADDER_HOURS),
+    }
+
+
+def _quota_recovery_due(status_payload: Dict[str, Any]) -> bool:
+    return int(status_payload.get("attempted_today", 0) or 0) > int(status_payload.get("generated_today", 0) or 0)
+
+
+def _campaign_ready_for_scheduled_build(slug: str) -> str:
+    progress = campaign_project_progress(slug)
+    if not progress.get("rules_stored"):
+        return "Campaign brief/rules are not stored."
+    if not progress.get("source_ready"):
+        return "No local source media is verified for this campaign."
+    watermark_blocker = campaign_watermark_blocker(slug)
+    if watermark_blocker:
+        return watermark_blocker
+    return ""
+
+
+def review_schedule_tick(
+    *,
+    now: Optional[datetime] = None,
+    require_campaign_ready: bool = True,
+    force_due: bool = False,
+) -> Dict[str, Any]:
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    day_key = _local_day_key(current)
+    status_payload = review_schedule_status(now=current)
+    if int(status_payload["generated_today"]) >= REVIEW_SCHEDULE_DAILY_CAP:
+        return {**status_payload, "status": "capped", "queued": [], "skipped": ["daily generated cap reached"]}
+    if int(status_payload["attempted_today"]) >= REVIEW_SCHEDULE_DAILY_ATTEMPT_CAP:
+        return {**status_payload, "status": "capped", "queued": [], "skipped": ["daily attempt safety cap reached"]}
+    active_scheduled_jobs = rows(
+        "SELECT * FROM job_runs WHERE intent='scheduled_campaign_review_build' AND status IN ('queued','claimed','running')"
+    )
+    projected_backlog = int(status_payload["needs_review_backlog"]) + len(active_scheduled_jobs)
+    if projected_backlog >= REVIEW_SCHEDULE_BACKLOG_LIMIT:
+        return {**status_payload, "status": "backlog_blocked", "queued": [], "skipped": ["review backlog plus pending scheduled builds is at or above daily limit"]}
+
+    queued: List[Dict[str, Any]] = []
+    skipped: List[str] = []
+    pending_slugs = {
+        str(item.get("campaign_slug", ""))
+        for item in active_scheduled_jobs
+    }
+    attempted_by_slug = {str(item["campaign_slug"]): int(item["attempted_today"]) for item in status_payload["campaigns"]}
+    generated_by_slug = {str(item["campaign_slug"]): int(item["generated_today"]) for item in status_payload["campaigns"]}
+    quota_recovery_mode = _quota_recovery_due(status_payload)
+    freshness_ladder_hours = list(QUOTA_RECOVERY_FRESHNESS_LADDER_HOURS if quota_recovery_mode else FRESHNESS_LADDER_HOURS)
+    for schedule in _schedule_rows():
+        if projected_backlog + len(queued) >= REVIEW_SCHEDULE_BACKLOG_LIMIT:
+            skipped.append("review backlog plus pending scheduled builds is at or above daily limit")
+            break
+        if int(status_payload["generated_today"]) + len(queued) >= REVIEW_SCHEDULE_DAILY_CAP:
+            break
+        if int(status_payload["attempted_today"]) + len(queued) >= REVIEW_SCHEDULE_DAILY_ATTEMPT_CAP:
+            break
+        slug = str(schedule.get("campaign_slug", ""))
+        if not int(schedule.get("enabled", 1) or 0):
+            skipped.append(f"{slug}: paused")
+            continue
+        if generated_by_slug.get(slug, 0) >= int(schedule.get("daily_cap", REVIEW_SCHEDULE_CAMPAIGN_DAILY_CAP) or REVIEW_SCHEDULE_CAMPAIGN_DAILY_CAP):
+            skipped.append(f"{slug}: campaign daily cap reached")
+            continue
+        if attempted_by_slug.get(slug, 0) >= REVIEW_SCHEDULE_CAMPAIGN_ATTEMPT_CAP:
+            skipped.append(f"{slug}: campaign attempt safety cap reached")
+            continue
+        if slug in pending_slugs and not force_due:
+            skipped.append(f"{slug}: pending scheduled build already exists")
+            continue
+        last_queued = str(schedule.get("last_queued_at", ""))
+        if last_queued and not force_due:
+            try:
+                parsed = datetime.fromisoformat(last_queued)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                cadence = timedelta(hours=int(schedule.get("cadence_hours", REVIEW_SCHEDULE_CADENCE_HOURS) or REVIEW_SCHEDULE_CADENCE_HOURS))
+                if current - parsed < cadence:
+                    skipped.append(f"{slug}: not due yet")
+                    continue
+            except ValueError:
+                pass
+        if require_campaign_ready:
+            blocker = _campaign_ready_for_scheduled_build(slug)
+            if blocker:
+                skipped.append(f"{slug}: {blocker}")
+                continue
+        payload = {
+            "campaign_slug": slug,
+            "limit": 1,
+            "style": CAMPAIGN_SHORT_PROFILE,
+            "selection_mode": "fresh_best_candidate",
+            "freshness_ladder_hours": freshness_ladder_hours,
+            "avoid_rejected_patterns": True,
+            "quota_recovery_mode": quota_recovery_mode,
+            "quota_recovery_policy": quota_recovery_policy(quota_recovery_mode),
+            "learning_context": learning_context_for_campaign(slug, limit=8),
+            "schedule_day": day_key,
+            "scheduled_at": current.isoformat(),
+        }
+        job = create_job_intent(
+            "scheduled_campaign_review_build",
+            payload,
+            campaign_slug=slug,
+            requested_by="review-scheduler",
+            hermes_profile_name=hermes_profile(),
+            force_new=True,
+        )
+        execute("UPDATE review_schedule SET last_queued_at=?, updated_at=? WHERE campaign_slug=?", (current.isoformat(), utc_now(), slug))
+        queued.append(job)
+    status = "queued" if queued else ("capped" if int(status_payload["generated_today"]) >= REVIEW_SCHEDULE_DAILY_CAP or int(status_payload["attempted_today"]) >= REVIEW_SCHEDULE_DAILY_ATTEMPT_CAP else "skipped")
+    log_audit("scheduler", "review_schedule_tick", "review_schedule", day_key, status, json.dumps({"queued": len(queued), "skipped": skipped})[:800])
+    return {**review_schedule_status(now=current), "status": status, "queued": queued, "skipped": skipped}
+
+
+def scheduled_review_factory_proof_status() -> Dict[str, Any]:
+    schedule = review_schedule_status()
+    candidates = [
+        _job_with_json(item)
+        for item in rows(
+            """
+            SELECT *
+            FROM job_runs
+            WHERE intent='scheduled_campaign_review_build'
+              AND status IN ('queued','claimed','running','succeeded','blocked')
+            ORDER BY started_at DESC
+            LIMIT 100
+            """
+        )
+    ]
+    matching: List[Dict[str, Any]] = []
+    wrong_profile = 0
+    wrong_payload = 0
+    for job in candidates:
+        if str(job.get("hermes_profile", "")) != MINIMAX_HERMES_PROFILE:
+            wrong_profile += 1
+            continue
+        payload = _parse_payload(job.get("payload", job.get("payload_json", {})))
+        payload_ladder = tuple(int(item) for item in payload.get("freshness_ladder_hours", []) if str(item).strip())
+        allowed_ladders = {tuple(FRESHNESS_LADDER_HOURS), tuple(QUOTA_RECOVERY_FRESHNESS_LADDER_HOURS)}
+        if (
+            str(job.get("requested_by", "")) != "review-scheduler"
+            or payload_ladder not in allowed_ladders
+            or int(payload.get("limit", 0) or 0) != 1
+            or str(payload.get("style", "")) != CAMPAIGN_SHORT_PROFILE
+        ):
+            wrong_payload += 1
+            continue
+        matching.append(job)
+    ready = (
+        bool(matching)
+        and int(schedule.get("daily_cap", 0) or 0) == REVIEW_SCHEDULE_DAILY_CAP
+        and all(int(item.get("daily_cap", 0) or 0) == REVIEW_SCHEDULE_CAMPAIGN_DAILY_CAP for item in schedule.get("campaigns", []))
+    )
+    blockers: List[str] = []
+    if not matching:
+        blockers.append("No MiniMax-profile scheduled_campaign_review_build proof jobs exist.")
+    if int(schedule.get("daily_cap", 0) or 0) != REVIEW_SCHEDULE_DAILY_CAP:
+        blockers.append("Global daily cap is not 24.")
+    if any(int(item.get("daily_cap", 0) or 0) != REVIEW_SCHEDULE_CAMPAIGN_DAILY_CAP for item in schedule.get("campaigns", [])):
+        blockers.append("At least one active campaign does not have an 8/day cap.")
+    return {
+        "ready": ready,
+        "status": "green" if ready else ("yellow" if candidates else "red"),
+        "matching_count": len(matching),
+        "candidate_count": len(candidates),
+        "wrong_profile_count": wrong_profile,
+        "wrong_payload_count": wrong_payload,
+        "daily_cap": schedule.get("daily_cap"),
+        "campaign_count": len(schedule.get("campaigns", [])),
+        "freshness_ladder_hours": list(FRESHNESS_LADDER_HOURS),
+        "quota_recovery_freshness_ladder_hours": list(QUOTA_RECOVERY_FRESHNESS_LADDER_HOURS),
+        "blockers": blockers,
+        "latest_job_ids": [str(item.get("id", "")) for item in matching[:10]],
+    }
+
+
 def _stable_payload(payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not payload:
         return {}
@@ -1210,6 +1922,36 @@ def _job_with_json(item: Dict[str, Any]) -> Dict[str, Any]:
             enriched[target] = {}
     enriched["cancel_requested"] = bool(int(enriched.get("cancel_requested", 0) or 0))
     return enriched
+
+
+def _compact_text(value: Any, limit: int = 240) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _compact_job(item: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": item.get("id"),
+        "name": item.get("name"),
+        "kind": item.get("kind"),
+        "intent": item.get("intent"),
+        "campaign_slug": item.get("campaign_slug"),
+        "requested_by": item.get("requested_by"),
+        "claimed_by": item.get("claimed_by"),
+        "hermes_profile": item.get("hermes_profile"),
+        "status": item.get("status"),
+        "stage": item.get("stage"),
+        "progress": item.get("progress"),
+        "logs": _compact_text(item.get("logs")),
+        "output_path": _compact_text(item.get("output_path")),
+        "error": _compact_text(item.get("error")),
+        "started_at": item.get("started_at"),
+        "finished_at": item.get("finished_at"),
+        "heartbeat_at": item.get("heartbeat_at"),
+        "cancel_requested": bool(int(item.get("cancel_requested", 0) or 0)),
+    }
 
 
 def _job_name_for_intent(intent: str, campaign_slug: str = "") -> str:
@@ -1333,13 +2075,16 @@ def create_job_intent(
     return _job_with_json(created or {})
 
 
-def visible_jobs(limit: int = 100, status: str = "") -> List[Dict[str, Any]]:
+def visible_jobs(limit: int = 100, status: str = "", compact: bool = False) -> List[Dict[str, Any]]:
     params: tuple[Any, ...] = ()
     where = ""
     if status:
         where = "WHERE status = ?"
         params = (status,)
-    return [_job_with_json(item) for item in rows(f"SELECT * FROM job_runs {where} ORDER BY started_at DESC LIMIT ?", (*params, limit))]
+    records = rows(f"SELECT * FROM job_runs {where} ORDER BY started_at DESC LIMIT ?", (*params, limit))
+    if compact:
+        return [_compact_job(item) for item in records]
+    return [_job_with_json(item) for item in records]
 
 
 def queued_jobs(limit: int = 25) -> List[Dict[str, Any]]:
@@ -1578,7 +2323,7 @@ def visible_render_kits() -> List[Dict[str, Any]]:
             continue
         if int(item.get("is_demo", 0) or 0) == 1:
             continue
-        proof_status = production_feeder_kit_status(item).get("classification")
+        proof_status = production_feeder_kit_status(item, verify_video=False).get("classification")
         protected_green_campaign_kit = is_active_campaign_project(campaign_slug) and proof_status == "green"
         if str(item.get("nomination_id", "")) not in visible_nomination_ids and not protected_green_campaign_kit:
             continue
@@ -1595,7 +2340,7 @@ def visible_render_kits() -> List[Dict[str, Any]]:
             continue
         if proof_status not in {"green", "yellow"}:
             continue
-        visible.append(enrich_render_kit_with_clip_metadata(item))
+        visible.append(enrich_render_kit_with_clip_metadata(item, verify_video=False, campaign_proof_status=proof_status))
     return sorted(visible, key=render_kit_sort_key, reverse=True)
 
 
@@ -1617,7 +2362,11 @@ def rendered_at_for_video(path_value: Any) -> str:
         return ""
 
 
-def enrich_render_kit_with_clip_metadata(kit: Dict[str, Any]) -> Dict[str, Any]:
+def enrich_render_kit_with_clip_metadata(
+    kit: Dict[str, Any],
+    verify_video: bool = True,
+    campaign_proof_status: Optional[str] = None,
+) -> Dict[str, Any]:
     enriched = dict(kit)
     enriched["rendered_at"] = rendered_at_for_video(enriched.get("review_video_path", ""))
     nomination = one("SELECT * FROM render_nominations WHERE id = ?", (str(kit.get("nomination_id", "")),))
@@ -1652,7 +2401,30 @@ def enrich_render_kit_with_clip_metadata(kit: Dict[str, Any]) -> Dict[str, Any]:
         enriched["clip_duration"] = float(clip.get("duration", 0) or 0)
         enriched["clip_start_seconds"] = float(clip.get("clip_start_seconds", 0) or 0)
         enriched["clip_end_seconds"] = float(clip.get("clip_end_seconds", 0) or 0)
-    enriched["campaign_proof_status"] = production_feeder_kit_status(kit).get("classification", "red")
+    if campaign_proof_status is None:
+        campaign_proof_status = production_feeder_kit_status(kit, verify_video=verify_video).get("classification", "red")
+    enriched["campaign_proof_status"] = campaign_proof_status
+    package = one("SELECT id, status FROM publish_packages WHERE kit_id = ?", (str(kit.get("id", "")),))
+    publish_job = one(
+        """
+        SELECT id, status, stage, mode, scheduled_at, hermes_job_id, error
+        FROM publish_jobs
+        WHERE kit_id = ?
+          AND status NOT IN ('cancelled')
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        (str(kit.get("id", "")),),
+    )
+    enriched["publish_package_id"] = str((package or {}).get("id", ""))
+    enriched["publish_package_status"] = str((package or {}).get("status", ""))
+    enriched["publish_job_id"] = str((publish_job or {}).get("id", ""))
+    enriched["publish_status"] = str((publish_job or {}).get("status", ""))
+    enriched["publish_stage"] = str((publish_job or {}).get("stage", ""))
+    enriched["publish_mode"] = str((publish_job or {}).get("mode", ""))
+    enriched["publish_scheduled_at"] = str((publish_job or {}).get("scheduled_at", ""))
+    enriched["publish_hermes_job_id"] = str((publish_job or {}).get("hermes_job_id", ""))
+    enriched["publish_error"] = str((publish_job or {}).get("error", ""))
     return enriched
 
 
@@ -1808,6 +2580,110 @@ def editorial_min_views_for_campaign(slug: str) -> int:
     return int(EDITORIAL_MIN_VIEWS_BY_CAMPAIGN.get(normalize_campaign_slug(slug), EDITORIAL_DEFAULT_MIN_VIEWS))
 
 
+def _parse_clip_timestamp(raw: Any) -> Optional[datetime]:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def editorial_freshness_window_hours_for_clip(clip: Dict[str, Any], now: Optional[datetime] = None) -> int:
+    flags = _risk_flags(clip)
+    fresh_windows: List[int] = []
+    for flag in flags:
+        match = re.fullmatch(r"fresh_window_(\d+)h", str(flag))
+        if match:
+            fresh_windows.append(int(match.group(1)))
+    if "top_24h_candidate" in flags:
+        fresh_windows.append(24)
+    created_at = _parse_clip_timestamp(clip.get("clip_created_at") or clip.get("created_at"))
+    if created_at:
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        age_seconds = max(0.0, (current.astimezone(timezone.utc) - created_at).total_seconds())
+        age_hours = int((age_seconds + 3599) // 3600)
+        for window in QUOTA_RECOVERY_FRESHNESS_LADDER_HOURS:
+            if age_hours <= window:
+                fresh_windows.append(window)
+                break
+    if not fresh_windows:
+        return 0
+    return min(fresh_windows)
+
+
+def editorial_min_views_for_clip(clip: Dict[str, Any], slug: str) -> int:
+    base = editorial_min_views_for_campaign(slug)
+    freshest = editorial_freshness_window_hours_for_clip(clip)
+    if not freshest:
+        return base
+    fresh_floor = EDITORIAL_FRESH_MIN_VIEWS_BY_WINDOW.get(freshest)
+    if fresh_floor is None:
+        return base
+    return min(base, fresh_floor)
+
+
+def review_candidate_priority(clip: Dict[str, Any], slug: str, *, quota_recovery: bool = False) -> Dict[str, Any]:
+    gate = editorial_candidate_gate(
+        clip,
+        slug,
+        quota_recovery=quota_recovery,
+        allow_unproven_source=quota_recovery,
+    )
+    flags = _risk_flags(clip)
+    freshness_window = editorial_freshness_window_hours_for_clip(clip)
+    if not freshness_window:
+        freshness_rank = 99
+    elif freshness_window <= 72:
+        freshness_rank = 0
+    elif freshness_window <= 120:
+        freshness_rank = 1
+    elif freshness_window <= 336:
+        freshness_rank = 2
+    else:
+        freshness_rank = 3
+    created_at = _parse_clip_timestamp(clip.get("clip_created_at") or clip.get("created_at"))
+    created_timestamp = created_at.timestamp() if created_at else 0.0
+    local_source_ready = bool(str(clip.get("local_media_path", "")).strip()) or bool(LOCAL_MEDIA_READY_FLAGS.intersection(flags))
+    views = int(clip.get("view_count", 0) or 0)
+    return {
+        "gate_status": str(gate.get("status", "")),
+        "freshness_window_hours": freshness_window,
+        "freshness_rank": freshness_rank,
+        "local_source_ready": local_source_ready,
+        "view_count": views,
+        "created_timestamp": created_timestamp,
+        "blockers": gate.get("blockers", []),
+        "warnings": gate.get("warnings", []),
+    }
+
+
+def _review_candidate_sort_tuple(priority: Dict[str, Any]) -> tuple:
+    return (
+        0 if str(priority.get("gate_status", "")) == "green" else 1,
+        int(priority.get("freshness_rank", 99) or 99),
+        int(priority.get("freshness_window_hours", 999999) or 999999),
+        0 if bool(priority.get("local_source_ready")) else 1,
+        -int(priority.get("view_count", 0) or 0),
+        -float(priority.get("created_timestamp", 0.0) or 0.0),
+    )
+
+
+def review_candidate_order(clips: Iterable[Dict[str, Any]], slug: str, *, quota_recovery: bool = False) -> List[Dict[str, Any]]:
+    enriched: List[Dict[str, Any]] = []
+    for clip in clips:
+        row = dict(clip)
+        row["review_priority"] = review_candidate_priority(row, slug, quota_recovery=quota_recovery)
+        enriched.append(row)
+    return sorted(enriched, key=lambda item: _review_candidate_sort_tuple(item["review_priority"]))
+
+
 def effective_clip_duration_seconds(clip: Dict[str, Any]) -> float:
     try:
         start = float(clip.get("clip_start_seconds", 0) or 0)
@@ -1827,7 +2703,13 @@ def _normalized_editorial_title(title: Any) -> str:
     return re.sub(r"\s+", " ", str(title or "").strip()).lower()
 
 
-def editorial_candidate_gate(clip: Dict[str, Any], campaign_slug: str = "") -> Dict[str, Any]:
+def editorial_candidate_gate(
+    clip: Dict[str, Any],
+    campaign_slug: str = "",
+    *,
+    quota_recovery: bool = False,
+    allow_unproven_source: bool = False,
+) -> Dict[str, Any]:
     """Clip-level editorial filter before any expensive render work.
 
     Mechanical proof is not enough. This gate rejects valid-but-boring/random
@@ -1837,20 +2719,36 @@ def editorial_candidate_gate(clip: Dict[str, Any], campaign_slug: str = "") -> D
     title = _normalized_editorial_title(clip.get("title", ""))
     views = int(clip.get("view_count", 0) or 0)
     duration = effective_clip_duration_seconds(clip)
-    min_views = editorial_min_views_for_campaign(slug)
+    min_views = editorial_min_views_for_clip(clip, slug)
+    freshness_window = editorial_freshness_window_hours_for_clip(clip)
+    flags = _risk_flags(clip)
+    manual_review_pick = "manual_editorial_review_pick" in flags
+    quota_recovery_pick = quota_recovery or "quota_recovery_review_pick" in flags
     blockers: List[str] = []
     warnings: List[str] = []
     if views < min_views:
-        blockers.append(f"clip has {views} views; editorial floor for {slug or 'campaign'} is {min_views}")
+        message = f"clip has {views} views; editorial floor for {slug or 'campaign'} is {min_views}"
+        if manual_review_pick:
+            warnings.append(f"manual editorial review pick below normal view floor: {message}")
+        elif quota_recovery_pick:
+            warnings.append(f"quota recovery pick below normal view floor: {message}")
+        else:
+            blockers.append(message)
     if duration <= 0:
         blockers.append("clip duration is missing")
     elif duration > EDITORIAL_MAX_DURATION_SECONDS:
         blockers.append(f"clip is {duration:.1f}s; cut must be tighter than {EDITORIAL_MAX_DURATION_SECONDS:.0f}s unless manually revised")
-    if title in EDITORIAL_WEAK_TITLE_TOKENS or len(title) < 4:
-        blockers.append("clip title is too weak/generic to justify automatic review")
+    weak_title = title in EDITORIAL_WEAK_TITLE_TOKENS or len(title) < 4
+    if weak_title:
+        if quota_recovery_pick:
+            warnings.append("quota recovery pick has weak/generic title; human review must judge hook strength")
+        else:
+            blockers.append("clip title is too weak/generic to justify automatic review")
     if title.startswith("yourrage talks about") or title.endswith("speaking on the situation"):
         warnings.append("title reads like context/news coverage; human should confirm hook strength")
-    if "metadata_only_no_download" in _risk_flags(clip):
+    if "metadata_only_no_download" in flags and allow_unproven_source and quota_recovery_pick:
+        warnings.append("quota recovery will attempt to download and prove metadata-only source before rendering")
+    elif "metadata_only_no_download" in flags:
         blockers.append("clip is metadata-only; local source media must be proven before review")
     return {
         "status": "green" if not blockers else "red",
@@ -1863,7 +2761,10 @@ def editorial_candidate_gate(clip: Dict[str, Any], campaign_slug: str = "") -> D
         "duration": duration,
         "thresholds": {
             "min_views": min_views,
+            "freshness_window_hours": freshness_window,
             "max_duration_seconds": EDITORIAL_MAX_DURATION_SECONDS,
+            "quota_recovery": quota_recovery_pick,
+            "allow_unproven_source": allow_unproven_source,
         },
     }
 
@@ -1883,8 +2784,15 @@ def editorial_review_for_rendered_kit(
     campaign_slug: str = "",
     *,
     require_sidecar: bool = True,
+    quota_recovery: bool = False,
 ) -> Dict[str, Any]:
-    gate = editorial_candidate_gate(clip, campaign_slug)
+    sidecar_path = kit_dir / "editorial_review.json"
+    sidecar_payload: Dict[str, Any] = {}
+    if require_sidecar:
+        sidecar_payload = read_json_artifact(sidecar_path)
+    sidecar_thresholds = sidecar_payload.get("thresholds", {}) if isinstance(sidecar_payload, dict) else {}
+    sidecar_quota_recovery = bool(isinstance(sidecar_thresholds, dict) and sidecar_thresholds.get("quota_recovery"))
+    gate = editorial_candidate_gate(clip, campaign_slug, quota_recovery=quota_recovery or sidecar_quota_recovery)
     blockers = [str(item) for item in gate.get("blockers", [])]
     warnings = [str(item) for item in gate.get("warnings", [])]
     composition_mode = _manifest_composition_mode(kit_dir)
@@ -1895,10 +2803,7 @@ def editorial_review_for_rendered_kit(
     elif not composition_mode:
         blockers.append("render composition manifest is missing")
 
-    sidecar_path = kit_dir / "editorial_review.json"
-    sidecar_payload: Dict[str, Any] = {}
     if require_sidecar:
-        sidecar_payload = read_json_artifact(sidecar_path)
         if not sidecar_payload:
             blockers.append("editorial_review.json missing")
         elif str(sidecar_payload.get("status", "")).lower() != "green":
@@ -2065,6 +2970,10 @@ def _render_text_manifest_blockers(path: Path) -> List[str]:
             blockers.append("campaign final render requires a viewer-facing top summary hook card")
         elif normalized_hook in WEAK_RENDERED_HOOKS or len(hook_words) < 5:
             blockers.append("viewer hook card is too weak or shorthand for production proof")
+        else:
+            hook_violations = hook_quality_violations(hook)
+            if hook_violations:
+                blockers.append("viewer hook card failed quality gate: " + ", ".join(hook_violations[:4]))
         blockers.extend(_caption_timeline_consensus_blockers(rendered))
     elif caption_only:
         if len(caption_beats) < 3 or caption_word_count < 8:
@@ -2090,11 +2999,23 @@ def _caption_timeline_consensus_blockers(rendered: Dict[str, Any]) -> List[str]:
             spread = float(item.get("vote_spread_seconds", 0) or 0)
             start = float(item.get("start", 0) or 0)
             end = float(item.get("end", 0) or 0)
+            source_start = float(item.get("source_start", item.get("start", 0)) or 0)
+            max_lead = float(item.get("max_pre_audio_lead_seconds", CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS) or CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS)
+            lead = float(item.get("audio_lead_seconds", max(0.0, source_start - start)) or 0)
+            lag = float(item.get("audio_lag_seconds", max(0.0, start - source_start)) or 0)
         except (TypeError, ValueError):
             blockers.append(f"caption {index}: timing values are invalid")
             continue
         if end <= start:
             blockers.append(f"caption {index}: timing window is invalid")
+        calculated_lead = max(0.0, source_start - start)
+        calculated_lag = max(0.0, start - source_start)
+        lead_allowed = min(max_lead, CAPTION_MAX_AUDIO_LEAD_SECONDS) + 0.015
+        lag_allowed = CAPTION_MAX_AUDIO_LAG_SECONDS + 0.015
+        if max(lead, calculated_lead) > lead_allowed:
+            blockers.append(f"caption {index}: starts before the spoken word by {max(lead, calculated_lead):.2f}s")
+        if max(lag, calculated_lag) > lag_allowed:
+            blockers.append(f"caption {index}: starts after the spoken word by {max(lag, calculated_lag):.2f}s")
         if mode == "ensemble_consensus" and (votes < 3 or spread > 0.85):
             blockers.append(f"caption {index}: weak ensemble timing consensus for `{text}`")
         elif mode == "strong_model_anchor" and (votes < 2 or spread > 0.35):
@@ -2102,7 +3023,7 @@ def _caption_timeline_consensus_blockers(rendered: Dict[str, Any]) -> List[str]:
     return blockers[:8]
 
 
-def production_feeder_kit_status(kit: Dict[str, Any]) -> Dict[str, Any]:
+def production_feeder_kit_status(kit: Dict[str, Any], verify_video: bool = True) -> Dict[str, Any]:
     """Canonical production render-proof classifier.
 
     The customer-facing app, QA audit, CEO report, and readiness endpoint all use
@@ -2112,19 +3033,32 @@ def production_feeder_kit_status(kit: Dict[str, Any]) -> Dict[str, Any]:
     video_path = Path(str(kit.get("review_video_path", "")))
     kit_dir = video_path.parent
     nomination = one("SELECT * FROM render_nominations WHERE id = ?", (str(kit.get("nomination_id", "")),))
+    cache_key = str(kit.get("id") or video_path)
+    cache_fingerprint = ""
+    if not verify_video:
+        cache_fingerprint = _fast_proof_cache_fingerprint(kit, nomination, kit_dir)
+        cached_status = _fast_proof_cache_get(cache_key, cache_fingerprint)
+        if cached_status is not None:
+            return cached_status
+
+    def finish(result: Dict[str, Any]) -> Dict[str, Any]:
+        if not verify_video:
+            _fast_proof_cache_put(cache_key, cache_fingerprint, result)
+        return result
+
     target_style = str((nomination or {}).get("target_style", "")).strip()
     base_status = kit_dir_status(kit)
     profile = str(base_status.get("critique_profile") or target_style).strip()
 
     if int(kit.get("is_demo", 0) or 0) == 1 or profile in IGNORED_STUDY_PROFILES or target_style in IGNORED_STUDY_PROFILES:
-        return {
+        return finish({
             "classification": "ignored_study",
             "profile": profile or target_style,
             "target_style": target_style,
             "blockers": ["demo/reference/evidence-study kit is intentionally excluded from production proof"],
             "kit_dir": str(kit_dir),
             "clip_ids": _clip_ids_for_nomination(nomination),
-        }
+        })
 
     campaign_slug = campaign_slug_for_kit(kit, nomination)
     is_campaign_profile = profile == CAMPAIGN_SHORT_PROFILE or target_style == CAMPAIGN_SHORT_PROFILE or bool(campaign_slug)
@@ -2148,7 +3082,7 @@ def production_feeder_kit_status(kit: Dict[str, Any]) -> Dict[str, Any]:
         blockers.append("kit is not rendered with selected_feeder_final_v1")
     if not video_path.exists():
         blockers.append("review.mp4 missing")
-    elif not _actual_review_video_ok(video_path):
+    elif verify_video and not _actual_review_video_ok(video_path):
         blockers.append("review.mp4 is not a readable H.264/AAC 1080x1920 file")
     if base_status.get("missing"):
         blockers.append(f"missing sidecars: {', '.join(base_status['missing'])}")
@@ -2157,8 +3091,8 @@ def production_feeder_kit_status(kit: Dict[str, Any]) -> Dict[str, Any]:
     blockers.extend(_render_text_manifest_blockers(kit_dir / "render_text_manifest.json"))
     if base_status.get("critique_status") != "green":
         blockers.append("style critique is not green")
-    if str(kit.get("review_status", "")) == "rejected_revision_requested":
-        blockers.append("kit is currently rejected for revision")
+    if str(kit.get("review_status", "")) in {"rejected_revision_requested", "rejected_learning_signal"}:
+        blockers.append("kit was killed by the user and is learning signal only")
 
     combined_text = "\n".join(
         _text_file(kit_dir / name).lower()
@@ -2247,7 +3181,7 @@ def production_feeder_kit_status(kit: Dict[str, Any]) -> Dict[str, Any]:
         blockers.append("source.md does not prove local source media")
 
     classification = "green" if not blockers else ("red" if hard_editorial_blocked else ("yellow" if base_status.get("complete") and video_path.exists() else "red"))
-    return {
+    return finish({
         "classification": classification,
         "profile": profile,
         "target_style": target_style,
@@ -2259,7 +3193,7 @@ def production_feeder_kit_status(kit: Dict[str, Any]) -> Dict[str, Any]:
         "critique_status": base_status.get("critique_status", "unknown"),
         "ffprobe_ok": _ffprobe_contract_ok(kit_dir / "ffprobe.json"),
         "editorial_gate": "red" if hard_editorial_blocked else "green",
-    }
+    })
 
 
 def selected_feeder_source_media_counts() -> Dict[str, int]:
@@ -2352,7 +3286,7 @@ def campaign_clips(slug: str) -> List[Dict[str, Any]]:
     ]
 
 
-def campaign_render_kits(slug: str) -> List[Dict[str, Any]]:
+def campaign_render_kits(slug: str, verify_video: bool = True) -> List[Dict[str, Any]]:
     normalized = normalize_campaign_slug(slug)
     if not normalized:
         return []
@@ -2360,7 +3294,7 @@ def campaign_render_kits(slug: str) -> List[Dict[str, Any]]:
     for kit in rows("SELECT * FROM render_kits ORDER BY created_at DESC"):
         nomination = one("SELECT * FROM render_nominations WHERE id = ?", (str(kit.get("nomination_id", "")),))
         if campaign_slug_for_kit(kit, nomination) == normalized:
-            collected.append(enrich_render_kit_with_clip_metadata(kit))
+            collected.append(enrich_render_kit_with_clip_metadata(kit, verify_video=verify_video))
     return sorted(collected, key=render_kit_sort_key, reverse=True)
 
 
@@ -2372,7 +3306,7 @@ def _clip_has_local_source_media(clip: Dict[str, Any]) -> bool:
     return any(flag in flags for flag in LOCAL_MEDIA_READY_FLAGS)
 
 
-def campaign_project_progress(slug: str) -> Dict[str, Any]:
+def campaign_project_progress(slug: str, verify_video: bool = False) -> Dict[str, Any]:
     normalized = normalize_campaign_slug(slug)
     if not normalized:
         return {}
@@ -2405,8 +3339,14 @@ def campaign_project_progress(slug: str) -> Dict[str, Any]:
         }
     clips = campaign_clips(normalized)
     rules = campaign_rules_for_slug(normalized)
-    kits = campaign_render_kits(normalized)
-    proof_statuses = [production_feeder_kit_status(kit) for kit in kits]
+    kits: List[Dict[str, Any]] = []
+    proof_statuses: List[Dict[str, Any]] = []
+    for kit in rows("SELECT * FROM render_kits ORDER BY created_at DESC"):
+        nomination = one("SELECT * FROM render_nominations WHERE id = ?", (str(kit.get("nomination_id", "")),))
+        if campaign_slug_for_kit(kit, nomination) != normalized:
+            continue
+        kits.append(kit)
+        proof_statuses.append(production_feeder_kit_status(kit, verify_video=verify_video))
     green_kits = [kit for kit, status in zip(kits, proof_statuses) if status.get("classification") == "green"]
     approved_green = [
         kit
@@ -2468,12 +3408,12 @@ def campaign_project_progress(slug: str) -> Dict[str, Any]:
     }
 
 
-def campaign_project_records() -> List[Dict[str, Any]]:
-    return [campaign_project_progress(slug) for slug in active_campaign_project_slugs()]
+def campaign_project_records(verify_video: bool = False) -> List[Dict[str, Any]]:
+    return [campaign_project_progress(slug, verify_video=verify_video) for slug in active_campaign_project_slugs()]
 
 
-def three_campaign_review_batch_status() -> Dict[str, Any]:
-    projects = campaign_project_records()
+def three_campaign_review_batch_status(verify_video: bool = False) -> Dict[str, Any]:
+    projects = campaign_project_records(verify_video=verify_video)
     active_slugs = active_campaign_project_slugs()
     excluded = excluded_campaign_projects()
     blockers: List[str] = []
@@ -2566,19 +3506,46 @@ def hermes_cli_readiness() -> Dict[str, Any]:
     hermes_path = shutil.which("hermes") or str(Path.home() / ".local" / "bin" / "hermes")
     available = bool(hermes_path and Path(hermes_path).exists())
     if not available:
-        return {"available": False, "auth_degraded": False, "cron_ok": False, "detail": "hermes missing"}
+        return {"available": False, "auth_degraded": False, "cron_ok": False, "detail": "hermes missing", "provider": "", "model": "", "minimax": minimax_hermes_status(available=False)}
     try:
-        cron = subprocess.run([hermes_path, "cron", "list"], text=True, capture_output=True, timeout=8)
-        combined = f"{cron.stdout}\n{cron.stderr}".lower()
+        selected_profile = hermes_profile()
+        status_args = [hermes_path, "status"] if selected_profile == "default" else [hermes_path, "-p", selected_profile, "status"]
+        status = subprocess.run(status_args, text=True, capture_output=True, timeout=2)
+        cron = subprocess.run([hermes_path, "cron", "list"], text=True, capture_output=True, timeout=2)
+        combined_raw = f"{status.stdout}\n{status.stderr}\n{cron.stdout}\n{cron.stderr}"
+        combined = combined_raw.lower()
         auth_degraded = any(token in combined for token in ("401", "token invalidated", "invalid_grant", "unauthorized"))
+        provider = ""
+        model = ""
+        for line in status.stdout.splitlines():
+            stripped = line.strip()
+            if stripped.lower().startswith("provider:"):
+                provider = stripped.split(":", 1)[1].strip()
+            elif stripped.lower().startswith("model:"):
+                model = stripped.split(":", 1)[1].strip()
+        cron_jobs = clipping_hermes_cron_jobs()
+        minimax = minimax_hermes_status(
+            selected_profile=selected_profile,
+            provider=provider,
+            model=model,
+            cron_jobs=cron_jobs,
+            available=status.returncode == 0,
+            auth_degraded=auth_degraded,
+            api_key_configured=minimax_profile_key_configured(selected_profile),
+        )
         return {
-            "available": True,
+            "available": status.returncode == 0,
             "auth_degraded": auth_degraded,
             "cron_ok": cron.returncode == 0,
+            "provider": provider,
+            "model": model,
+            "minimax": minimax,
+            "cron_jobs": cron_job_summary_lines(cron_jobs),
+            "cron_job_details": cron_jobs,
             "detail": "cron auth degraded" if auth_degraded else ("cron ok" if cron.returncode == 0 else "cron list failed"),
         }
     except Exception as exc:
-        return {"available": True, "auth_degraded": False, "cron_ok": False, "detail": f"hermes cron check failed: {exc}"}
+        return {"available": True, "auth_degraded": False, "cron_ok": False, "provider": "", "model": "", "minimax": minimax_hermes_status(available=True), "detail": f"hermes cron check failed: {exc}"}
 
 
 def kit_dir_status(kit: Dict[str, Any]) -> Dict[str, Any]:
@@ -3038,26 +4005,27 @@ def readiness_report() -> Dict[str, Any]:
         if blockers:
             latest_kit_blockers.extend(blockers[:3])
 
-    gui_manifest_path = repo_root / "artifacts" / "desktop-qa" / "manifest.json"
+    gui_manifest_path = repo_root / "artifacts" / "web-qa" / "manifest.json"
     gui_fresh = artifact_freshness(gui_manifest_path)
     gui_manifest = read_json_artifact(gui_manifest_path)
     gui_ok = (
         bool(gui_fresh["fresh"])
         and bool(gui_manifest.get("ok"))
-        and bool(gui_manifest.get("app_survived_all_page_clicks"))
-        and not gui_manifest.get("new_crash_reports")
-        and len(gui_manifest.get("page_clicks", [])) >= 16
-        and len(gui_manifest.get("controls", [])) >= 8
-        and len(gui_manifest.get("media", [])) >= 1
+        and len(gui_manifest.get("route_checks", [])) >= 6
+        and len(gui_manifest.get("screenshots", [])) >= 3
+        and len(gui_manifest.get("interaction_checks", [])) >= 2
+        and not gui_manifest.get("console_errors")
+        and not gui_manifest.get("page_errors")
     )
     gui_detail = (
-        f"{len(gui_manifest.get('page_clicks', []))} clicks; "
+        f"{len(gui_manifest.get('route_checks', []))} routes; "
         f"{len(gui_manifest.get('screenshots', []))} screenshots; "
-        f"{len(gui_manifest.get('controls', []))} controls; "
-        f"{len(gui_manifest.get('new_crash_reports', []))} new crashes; "
+        f"{len(gui_manifest.get('interaction_checks', []))} interaction checks; "
+        f"{len(gui_manifest.get('console_errors', []))} console errors; "
+        f"{len(gui_manifest.get('page_errors', []))} page errors; "
         f"fresh={gui_fresh['fresh']} age_hours={gui_fresh['age_hours']}"
         if gui_manifest
-        else "desktop QA manifest missing"
+        else "web QA manifest missing"
     )
 
     security_path = repo_root / "artifacts" / "security" / "security-scan.json"
@@ -3110,18 +4078,6 @@ def readiness_report() -> Dict[str, Any]:
 
     handoff = codex_handoff_package_status(repo_root)
 
-    release_path = repo_root / "artifacts" / "distribution" / "release-verify.json"
-    release_fresh = artifact_freshness(release_path)
-    release_payload = read_json_artifact(release_path)
-    release_ok = bool(release_fresh["fresh"]) and bool(release_payload.get("customer_ship_ready"))
-    release_detail = (
-        f"bundle={release_payload.get('bundle_ok')}; signed={release_payload.get('signed_ok')}; "
-        f"identity={release_payload.get('signing_identity', '')}; notarized={release_payload.get('notarized_ok')}; "
-        f"fresh={release_fresh['fresh']}"
-        if release_payload
-        else "release verification artifact missing"
-    )
-
     product_path = repo_root / "artifacts" / "product-proof" / "artifact-summary.json"
     product_fresh = artifact_freshness(product_path)
     product_payload = read_json_artifact(product_path)
@@ -3133,6 +4089,10 @@ def readiness_report() -> Dict[str, Any]:
     hermes_proof = hermes_native_execution_proof()
     hermes_ok = bool(hermes_cli["available"]) and not bool(hermes_cli["auth_degraded"]) and bool(hermes_proof["ok"])
     hermes_status = "green" if hermes_ok else ("yellow" if hermes_cli["available"] else "red")
+    minimax_status = hermes_cli.get("minimax") if isinstance(hermes_cli.get("minimax"), dict) else minimax_hermes_status(available=bool(hermes_cli.get("available")))
+    schedule = review_schedule_status()
+    scheduled_proof = scheduled_review_factory_proof_status()
+    scheduler_ok = bool(scheduled_proof["ready"])
     hermes_blocker = ""
     if not hermes_cli["available"]:
         hermes_blocker = "Hermes CLI is missing from the local system."
@@ -3146,7 +4106,7 @@ def readiness_report() -> Dict[str, Any]:
     platform_ok = int(twitch_ok["count"]) > 0 and int(kick_ok["count"]) > 0
     gate_ok = gate.get("status") == "qualified"
     production_render_ok = non_demo_green_count > 0
-    review_batch = three_campaign_review_batch_status()
+    review_batch = three_campaign_review_batch_status(verify_video=True)
     active_source_targets_ok = all(
         int(project.get("source_ready_count", 0) or 0) >= int(project.get("review_target_count", CAMPAIGN_PROJECT_TARGET) or CAMPAIGN_PROJECT_TARGET)
         and bool(project.get("rules_stored"))
@@ -3168,6 +4128,24 @@ def readiness_report() -> Dict[str, Any]:
             f"{hermes_cli['detail']}; {hermes_proof['detail']}",
             hermes_blocker,
             "/api/agents",
+        ),
+        feature(
+            "MiniMax Hermes provider",
+            str(minimax_status.get("status", "red")),
+            f"profile={minimax_status.get('profile', '')}; provider={minimax_status.get('provider', '')}; model={minimax_status.get('model', '')}",
+            "; ".join(str(item) for item in minimax_status.get("blockers", [])),
+            "/api/hermes",
+        ),
+        feature(
+            "Fresh daily review scheduler",
+            str(scheduled_proof["status"]),
+            (
+                f"generated_today={schedule['generated_today']}/{schedule['daily_cap']}; "
+                f"campaigns={len(schedule['campaigns'])}; scheduled_proof_jobs={scheduled_proof['matching_count']}; "
+                f"freshness_ladder={list(FRESHNESS_LADDER_HOURS)}"
+            ),
+            "" if scheduler_ok else "; ".join(str(item) for item in scheduled_proof.get("blockers", [])),
+            "/api/review-schedule",
         ),
         feature(
             "Platform API production smoke",
@@ -3237,10 +4215,10 @@ def readiness_report() -> Dict[str, Any]:
             str(burned_caption_path),
         ),
         feature(
-            "GUI crash/control QA",
+            "Web cockpit QA",
             "green" if gui_ok else "red",
             gui_detail,
-            "" if gui_ok else "Run fresh desktop QA; it must include page clicks, controls, media frame proof, and zero new crashes.",
+            "" if gui_ok else "Run script/web_browser_qa.mjs; it must prove routes, screenshots, review controls, platform overlays, and console/page health.",
             str(gui_manifest_path),
         ),
         feature(
@@ -3272,13 +4250,6 @@ def readiness_report() -> Dict[str, Any]:
             str(handoff["manifest_path"]),
         ),
         feature(
-            "Prebuilt Mac app signing/notarization",
-            "green" if release_ok else ("yellow" if release_payload.get("bundle_ok") else "red"),
-            release_detail,
-            "" if release_ok else "Only required for handing someone a prebuilt .app. Codex source handoff can be green without Developer ID notarization.",
-            str(release_path),
-        ),
-        feature(
             "Product proof artifacts",
             "green" if product_ok else "red",
             f"artifact_summary={product_path}; fresh={product_fresh['fresh']} age_hours={product_fresh['age_hours']}",
@@ -3305,13 +4276,15 @@ def readiness_report() -> Dict[str, Any]:
     internal_required = [
         "Local backend source of truth",
         "Hermes-native orchestration",
+        "MiniMax Hermes provider",
+        "Fresh daily review scheduler",
         "Platform API production smoke",
         "Campaign research gate",
         "Campaign review source media",
         "Campaign review render proof",
         "Campaign review batch",
         "Burned-in subtitle proof",
-        "GUI crash/control QA",
+        "Web cockpit QA",
         "Security scan",
         "Human-confirmed publishing gate",
     ]

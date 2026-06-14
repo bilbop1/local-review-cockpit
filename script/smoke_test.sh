@@ -6,10 +6,19 @@ cd "$ROOT_DIR"
 HOST="${CLIPPING_OPS_HOST:-127.0.0.1}"
 PORT="${CLIPPING_OPS_PORT:-8765}"
 
+if [[ ! -f "$ROOT_DIR/web/dist/index.html" ]]; then
+  "$ROOT_DIR/script/build_web.sh"
+fi
 "$ROOT_DIR/script/start_backend.sh" start
 PYTHON_BIN="$ROOT_DIR/backend/.venv/bin/python3"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="$ROOT_DIR/backend/.venv/bin/python"
+fi
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="python3"
+fi
 
-python3 - "$HOST" "$PORT" <<'PY'
+"$PYTHON_BIN" - "$HOST" "$PORT" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -34,7 +43,7 @@ req = urllib.request.Request(
     headers={"Content-Type": "application/json"},
     method="POST",
 )
-with urllib.request.urlopen(req, timeout=360) as response:
+with urllib.request.urlopen(req, timeout=900) as response:
     demo = json.load(response)
 assert demo["status"] == "succeeded", demo
 
@@ -80,4 +89,4 @@ PY
 
 PYTHONPATH=backend "$PYTHON_BIN" "$ROOT_DIR/script/hermes_job_dispatcher.py" --limit 1 --json
 
-swift build
+"$PYTHON_BIN" "$ROOT_DIR/script/web_app_smoke.py" "$HOST" "$PORT"

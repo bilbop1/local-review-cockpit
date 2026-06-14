@@ -6,6 +6,7 @@ This contract is for any incoming model working from this GitHub repo, including
 
 - Backend/SQLite is the source of truth. Do not use Discord, prose, or memory as state.
 - Hermes is orchestration. Deterministic scripts do source checks, downloads, transcription, rendering, validation, and tests.
+- Clipping Ops Hermes must use the local `clipping-ops-minimax` profile with MiniMax for normal operation. Codex/OpenAI fallback is not green readiness proof.
 - GUI approval is human-owned. Agents may recommend, queue, validate, or report. Agents may not approve review kits or confirm live posts.
 - No fake readiness. Green means fresh proof from tests, API responses, artifacts, or backend records.
 - No source invention. A clip is not production-proof until it has campaign rules, source URL, provenance, local media, transcript timing, rendered video, sidecars, and validation.
@@ -27,6 +28,8 @@ This contract is for any incoming model working from this GitHub repo, including
 | Subtitle verifier failure | Render not acceptable | Rebuild transcript/timing/render; do not approve. |
 | Campaign lacks linked media/source route | Source proof missing | Exclude or keep yellow; do not content-generate filler. |
 | Hermes unavailable/degraded | Orchestration not ready | Keep direct fallback advanced-only; do not claim Hermes-native ready. |
+| MiniMax profile missing | Wrong model lane | Configure local Hermes/MiniMax; do not spend Codex quota as the normal path. |
+| Fresh 24h clips missing | Supply thin | Expand only to 48h, 72h, 4d, then 5d; do not jump to old broad lookbacks. |
 | Upload-Post key missing/warm-up incomplete | Live posting locked | Use dry-run only. |
 
 ## Required Incoming Flow
@@ -38,6 +41,7 @@ This contract is for any incoming model working from this GitHub repo, including
 5. Use `docs/COMMAND_COOKBOOK.md` for commands instead of inventing your own.
 6. Use `docs/HERMES_JOB_CONTRACT.md` for jobs instead of bypassing the job ledger.
 7. Use `docs/caption-style.md`, `docs/campaign-selection.md`, and `docs/streamer-composition.md` before rendering or judging clips.
+8. Use rejection notes as future-selection learning signal. Do not directly revise killed drafts unless the operator explicitly asks.
 
 ## Output Format For Agent Reports
 

@@ -132,34 +132,69 @@ def canonical_anchor_vote(source_name: str, target: Dict[str, Any]) -> Dict[str,
     }
 
 
-def preferred_canonical_source(source_word_sets: Dict[str, List[Dict[str, Any]]]) -> str:
-    def score(name: str) -> tuple[float, int]:
+def source_quality_score(name: str, words: List[Dict[str, Any]]) -> tuple[float, int]:
+    long_spans = 0
+    backwards = 0
+    previous_start = -1.0
+    for item in words:
+        try:
+            start = float(item.get("start", 0) or 0)
+            end = float(item.get("end", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if end - start > 0.82:
+            long_spans += 1
+        if previous_start >= 0 and start < previous_start - 0.02:
+            backwards += 1
+        previous_start = start
+    penalty = long_spans * 2.5 + backwards * 4.0
+    preference_bonus = 0.0
+    if "distil_medium" in name:
+        preference_bonus = 4.0
+    elif "medium" in name:
+        preference_bonus = 3.5
+    elif "small" in name:
+        preference_bonus = 2.0
+    elif "base" in name:
+        preference_bonus = 1.0
+    return (len(words) + preference_bonus - penalty, len(words))
+
+
+def minimum_consensus_survivors(target_count: int) -> int:
+    return min(target_count, max(8, int(target_count * 0.35)))
+
+
+def preferred_canonical_source(source_word_sets: Dict[str, List[Dict[str, Any]]], min_votes: int = 3) -> str:
+    max_word_count = max((len(words) for words in source_word_sets.values()), default=0)
+
+    def score(name: str) -> tuple[float, float, int, int, float, float, int]:
         words = source_word_sets[name]
-        long_spans = 0
-        backwards = 0
-        previous_start = -1.0
-        for item in words:
-            try:
-                start = float(item.get("start", 0) or 0)
-                end = float(item.get("end", 0) or 0)
-            except (TypeError, ValueError):
+        word_count = len(words)
+        if max_word_count >= 20 and word_count < 12 and word_count < max_word_count * 0.25:
+            quality, _word_count = source_quality_score(name, words)
+            return (0.0, 0.0, 0, 0, 0.0, quality - max_word_count, word_count)
+        target_groups = target_groups_from_words(words)
+        if not target_groups:
+            quality, _word_count = source_quality_score(name, words)
+            return (0.0, 0.0, 0, 0, 0.0, quality, word_count)
+
+        targets = [str(target["text"]) for target in target_groups]
+        support_by_index: Dict[int, int] = {int(target["target_index"]): 1 for target in target_groups}
+        for source_name, source_words in source_word_sets.items():
+            if source_name == name:
                 continue
-            if end - start > 0.82:
-                long_spans += 1
-            if previous_start >= 0 and start < previous_start - 0.02:
-                backwards += 1
-            previous_start = start
-        penalty = long_spans * 2.5 + backwards * 4.0
-        preference_bonus = 0.0
-        if "distil_medium" in name:
-            preference_bonus = 4.0
-        elif "medium" in name:
-            preference_bonus = 3.5
-        elif "small" in name:
-            preference_bonus = 2.0
-        elif "base" in name:
-            preference_bonus = 1.0
-        return (len(words) + preference_bonus - penalty, len(words))
+            for vote in model_votes_for_targets(source_name, source_words, targets, canonical_targets=target_groups):
+                if vote.get("matched"):
+                    support_by_index[int(vote["target_index"])] = support_by_index.get(int(vote["target_index"]), 1) + 1
+
+        survivors = sum(1 for count in support_by_index.values() if count >= min_votes)
+        two_vote_segments = sum(1 for count in support_by_index.values() if count >= 2)
+        target_count = len(target_groups)
+        coverage = survivors / max(1, target_count)
+        average_support = sum(support_by_index.values()) / max(1, target_count)
+        passes_survivor_floor = 1.0 if survivors >= minimum_consensus_survivors(target_count) else 0.0
+        quality, word_count = source_quality_score(name, words)
+        return (passes_survivor_floor, coverage, survivors, two_vote_segments, average_support, quality, word_count)
 
     return max(source_word_sets, key=score)
 
@@ -260,9 +295,70 @@ def aligned_votes_for_targets(source_name: str, words: List[Dict[str, Any]], tar
     return votes
 
 
-def model_votes_for_targets(source_name: str, words: List[Dict[str, Any]], targets: List[str]) -> List[Dict[str, Any]]:
+def same_index_timing_votes_for_targets(
+    source_name: str,
+    words: List[Dict[str, Any]],
+    targets: List[str],
+    canonical_targets: List[Dict[str, Any]],
+    max_anchor_distance: float = 1.0,
+) -> Dict[int, Dict[str, Any]]:
+    """Use ordinal-near groups as timing votes when short ASR text diverges."""
+    if not canonical_targets:
+        return {}
+    source_groups = target_groups_from_words(words, max_targets=len(canonical_targets) + 4)
+    votes: Dict[int, Dict[str, Any]] = {}
+    for target in canonical_targets:
+        try:
+            target_index = int(target["target_index"])
+            anchor_start = float(target["start"])
+            anchor_end = float(target["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if target_index < 1 or target_index > len(source_groups):
+            continue
+        candidate = source_groups[target_index - 1]
+        try:
+            start = float(candidate["start"])
+            end = float(candidate["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if end <= start:
+            continue
+        distance = max(abs(start - anchor_start), abs(end - anchor_end))
+        if distance > max_anchor_distance:
+            continue
+        target_text = str(target.get("text") or targets[target_index - 1])
+        candidate_text = str(candidate.get("text", ""))
+        target_norm = norm(target_text)
+        candidate_norm = norm(candidate_text)
+        target_is_short = len(phrase_tokens(target_text)) <= 2
+        text_similarity = token_similarity(target_norm, candidate_norm)
+        if not target_is_short and text_similarity < 0.36:
+            continue
+        votes[target_index] = {
+            "target_index": target_index,
+            "text": target_text,
+            "source": source_name,
+            "matched": True,
+            "match_mode": "same_index_temporal_anchor",
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "words": list(candidate.get("words", [])) if isinstance(candidate.get("words"), list) else [],
+            "candidate_text": candidate_text,
+            "anchor_distance_seconds": round(distance, 3),
+        }
+    return votes
+
+
+def model_votes_for_targets(
+    source_name: str,
+    words: List[Dict[str, Any]],
+    targets: List[str],
+    canonical_targets: List[Dict[str, Any]] | None = None,
+) -> List[Dict[str, Any]]:
     votes: List[Dict[str, Any]] = []
     fallback_votes = aligned_votes_for_targets(source_name, words, targets)
+    ordinal_votes = same_index_timing_votes_for_targets(source_name, words, targets, canonical_targets or [])
     search_from = 0
     for index, text in enumerate(targets, start=1):
         tokens = phrase_tokens(text)
@@ -271,7 +367,10 @@ def model_votes_for_targets(source_name: str, words: List[Dict[str, Any]], targe
             votes.append(
                 fallback_votes.get(
                     index,
-                    {"target_index": index, "text": text, "source": source_name, "matched": False},
+                    ordinal_votes.get(
+                        index,
+                        {"target_index": index, "text": text, "source": source_name, "matched": False},
+                    ),
                 )
             )
             continue
@@ -350,7 +449,7 @@ def anchored_segment(text: str, anchor: Dict[str, Any], votes: List[Dict[str, An
     raw_start_values = [float(vote["start"]) for vote in matched] or [float(anchor["start"])]
     raw_end_values = [float(vote["end"]) for vote in matched] or [float(anchor["end"])]
     spread = max(max(start_values) - min(start_values), max(end_values) - min(end_values)) if start_values and end_values else 0.0
-    start = max(0.0, median(start_values) + 0.035)
+    start = max(0.0, median(start_values))
     max_window = caption_display_window_seconds(text) + 0.04
     end = min(max(median(end_values), start + 0.20), start + max_window)
     return {
@@ -403,8 +502,8 @@ def consensus_for_target(text: str, votes: List[Dict[str, Any]], min_votes: int,
     spread = max(max(start_values) - min(start_values), max(end_values) - min(end_values))
     if spread > 0.85:
         raise RuntimeError(f"{text}: timing vote spread {spread:.2f}s is too wide")
-    # Favor slightly late over early; no negative preroll.
-    start = max(0.0, start_median + 0.035)
+    # Use the aligned first-word timestamp as the display anchor; no render-time late bias.
+    start = max(0.0, start_median)
     max_window = caption_display_window_seconds(text) + 0.04
     end = min(max(end_median + 0.08, start + 0.20), start + max_window)
     return {
@@ -552,7 +651,7 @@ def main() -> int:
         try:
             if not source_word_sets:
                 raise RuntimeError("no ensemble transcription sources produced word timings")
-            canonical_name = preferred_canonical_source(source_word_sets)
+            canonical_name = preferred_canonical_source(source_word_sets, min_votes=args.min_votes)
             target_groups = target_groups_from_words(source_word_sets[canonical_name])
             if not target_groups:
                 raise RuntimeError("no canonical caption targets were produced")
@@ -565,7 +664,7 @@ def main() -> int:
                     for target in target_groups:
                         source_votes[int(target["target_index"])].append(canonical_anchor_vote(source_name, target))
                     continue
-                for vote in model_votes_for_targets(source_name, words, targets):
+                for vote in model_votes_for_targets(source_name, words, targets, canonical_targets=target_groups):
                     source_votes[int(vote["target_index"])].append(vote)
 
             consensus_segments = []
@@ -582,7 +681,7 @@ def main() -> int:
                     )
                 except RuntimeError as exc:
                     kit_result["dropped_targets"].append({"index": index, "text": text, "reason": str(exc)})
-            minimum_survivors = min(len(targets), max(8, int(len(targets) * 0.35)))
+            minimum_survivors = minimum_consensus_survivors(len(targets))
             if len(consensus_segments) < minimum_survivors:
                 raise RuntimeError(
                     f"too few consensus captions survived ({len(consensus_segments)}/{len(targets)}); refusing to rerender"
@@ -597,6 +696,7 @@ def main() -> int:
                     campaign_slug=str(kit.get("campaign_slug", "")),
                     force=True,
                     caption_variant=caption_variant_for_kit(kit),
+                    quota_recovery=True,
                 )
         except Exception as exc:
             failures.append({"clip_id": clip_id, "error": str(exc)[:1800], "sources": kit_result["sources"]})

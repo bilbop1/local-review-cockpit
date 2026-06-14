@@ -12,7 +12,7 @@
 2. Use Campaigns to refresh the current active streamer-first project set: YourRAGE, PlaqueBoyMax, JasonTheWeen.
 3. Use Sources only for advanced API checks, watchlist candidates, and future creator campaigns.
 4. Keep demo/local proof kits out of the production Review Kits surface; build campaign review kits only after source provenance and local media are stored.
-5. Review videos in Review Kits; approval enables publish prep only, and live posting still needs provider readiness, completed warm-up, and final confirmation.
+5. Review videos in Review Kits; approval auto-creates publish prep and schedules a dry-run into the next future `:14` slot. Live posting still requires provider readiness plus final confirmation.
 
 ## Hard Stops
 

@@ -32,6 +32,9 @@ __pycache__/
 .venv/
 backend/.venv/
 node_modules
+web/node_modules/
+web/dist/
+*.tsbuildinfo
 *.log
 *.zip
 *.dmg

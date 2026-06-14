@@ -16,13 +16,19 @@ Runs no-key setup, build/test/smoke/security checks, and prints the next missing
 ./script/build_and_run.sh --verify
 ```
 
-Builds the SwiftPM app, stages `dist/Clipping Ops Cockpit.app`, starts the backend, and verifies launch wiring.
+Builds the browser cockpit, starts the backend, and verifies `/app` loads from `http://127.0.0.1:8765/app`.
 
 ```bash
 ./script/build_and_run.sh
 ```
 
-Starts the backend and opens the macOS app for normal operator use.
+Starts the backend, builds the browser cockpit, and prints the local URL for normal operator use.
+
+```bash
+./script/build_and_run.sh --dev
+```
+
+Runs Vite at `http://127.0.0.1:5173/app` with `/api` and `/media` proxied to the local backend. Use this when changing the UI.
 
 ## Backend Health
 
@@ -38,9 +44,11 @@ Use these before claiming readiness. Red/yellow rows are blockers or missing pro
 ## Tests
 
 ```bash
-swift build
+npm --prefix web run typecheck
+npm --prefix web run build
 PYTHONPATH=backend backend/.venv/bin/python -m unittest discover -s tests -v
 ./script/smoke_test.sh
+backend/.venv/bin/python script/web_app_smoke.py
 backend/.venv/bin/python script/security_scan.py
 ```
 
@@ -65,13 +73,15 @@ Stores the local operator's Twitch/Kick/optional Upload-Post values in macOS Key
 ## Hermes Local Checks
 
 ```bash
+./script/configure_minimax_hermes_local.sh
+./script/verify_minimax_hermes.sh
 hermes status
 hermes cron list
 ./script/install_hermes_clip_ops.sh
 PYTHONPATH=backend backend/.venv/bin/python script/hermes_job_dispatcher.py --limit 1 --json
 ```
 
-`install_hermes_clip_ops.sh` is optional convenience. A local Hermes profile must already exist on the operator's machine.
+`install_hermes_clip_ops.sh` installs Clipping Ops jobs under `clipping-ops-minimax` by default. A local Hermes install must already exist on the operator's machine. The MiniMax key must be supplied locally; never paste it into repo files.
 
 ## Queue A Job
 
@@ -82,6 +92,15 @@ curl -s -X POST http://127.0.0.1:8765/api/jobs \
 ```
 
 Queues work through the Hermes-native ledger. Do not bypass this path in normal workflow.
+
+## Review Factory Scheduler
+
+```bash
+curl -s http://127.0.0.1:8765/api/review-schedule
+PYTHONPATH=backend backend/.venv/bin/python script/review_schedule_tick.py --json
+```
+
+Expected normal behavior: scheduler queues due `scheduled_campaign_review_build` jobs only, capped at 8 per campaign and 24 total per local day. Fresh indexing uses 24h first, then 48h, 72h, 4d, and 5d.
 
 ## Caption And Composition Audits
 
@@ -103,4 +122,4 @@ Expected before warm-up/key setup: yellow, key missing, warm-up incomplete, live
 
 ## GUI QA Boundary
 
-Do not run `script/desktop_qa.py` on an active user desktop unless the operator explicitly approves foreground interaction. Prefer API/script proof for incoming setup.
+Use `node script/web_browser_qa.mjs` for non-foreground web cockpit QA. There is no supported native desktop harness.

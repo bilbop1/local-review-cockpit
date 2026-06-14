@@ -34,7 +34,7 @@ rm -rf "$CLIPPING_OPS_HOME"
 mkdir -p "$CLIPPING_OPS_HOME"
 
 missing=0
-for cmd in swift uv ffmpeg ffprobe python3 hermes; do
+for cmd in npm uv ffmpeg ffprobe python3 hermes; do
   if command -v "$cmd" >/dev/null 2>&1; then
     echo "✓ $cmd: $(command -v "$cmd")"
   else
@@ -51,8 +51,8 @@ if [[ "$missing" -ne 0 ]]; then
 fi
 
 echo
-echo "Building Swift app..."
-swift build
+echo "Building web cockpit..."
+"$ROOT_DIR/script/build_web.sh"
 
 echo
 echo "Starting backend and rendering demo kits..."
@@ -69,6 +69,9 @@ host, port = sys.argv[1], sys.argv[2]
 
 with urllib.request.urlopen(f"http://{host}:{port}/api/health", timeout=10) as response:
     health = json.load(response)
+with urllib.request.urlopen(f"http://{host}:{port}/app", timeout=10) as response:
+    app_html = response.read(4096).decode("utf-8", errors="replace")
+assert '<div id="root">' in app_html, app_html[:200]
 assert health["auth"]["no_key_mode"] is True, health["auth"]
 assert health["auth"]["providers"]["twitch"]["ok"] is False, health["auth"]
 assert health["auth"]["providers"]["kick"]["ok"] is False, health["auth"]

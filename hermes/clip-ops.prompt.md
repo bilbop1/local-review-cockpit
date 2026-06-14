@@ -10,6 +10,9 @@ Do:
 - Produce a concise operational brief with record IDs, severity, dedupe key, blockers, campaign review proof status, approvals needed, failed jobs, and next safe action.
 - Include streamer composition status for active review kits: native source dimensions, `streamer_split_facecam_top` count, `streamer_center_screen_no_facecam_detected` warnings, and any portrait-source blockers.
 - Treat queued jobs as operator intent. Deterministic job execution is handled by the no-agent dispatcher; do not pretend a queued job has completed until backend records say so.
+- Treat caption alignment as part of the render factory. `build_campaign_reviews` and `scheduled_campaign_review_build` must not be called successful until the dispatcher has run ensemble caption retiming for created clips; use `retime_review_kit_captions` for existing kits with lagging/leading subtitles.
+- Treat top-card hook quality as part of the render factory. If a campaign build reports `blocked_hook_quality`, brief it as a creative/selection blocker and queue a fresh candidate or better hook proposal; do not force generic hooks such as "had the whole chat watching" through review.
+- If supplying hook copy to a build job, use `hook_candidates_by_clip` JSON with `text` and `source` fields so the deterministic gate can choose or block it before render.
 - For publish jobs, report provider mode, warm-up/key blockers, package IDs, and post URLs if present. Do not confirm live posting or bypass the GUI confirmation gate.
 - If Discord messaging is available through Hermes, post only the brief or urgent blockers to the configured Clipping Ops channels.
 - Preserve the backend as source of truth.

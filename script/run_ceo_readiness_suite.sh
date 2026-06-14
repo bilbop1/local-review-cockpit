@@ -22,9 +22,10 @@ done
 
 cd "$ROOT_DIR"
 
-swift build
+"$ROOT_DIR/script/build_web.sh"
 PYTHONPATH=backend "$PYTHON_BIN" -m unittest discover -s tests -v
 "$ROOT_DIR/script/smoke_test.sh"
+"$PYTHON_BIN" "$ROOT_DIR/script/web_app_smoke.py"
 "$PYTHON_BIN" "$ROOT_DIR/script/prune_irrelevant_review_surface.py" || true
 "$PYTHON_BIN" "$ROOT_DIR/script/reconcile_source_media.py" || true
 PYTHONPATH=backend "$PYTHON_BIN" - <<'PY' || true
@@ -40,7 +41,7 @@ if ! "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
 import json
 import urllib.request
 
-with urllib.request.urlopen("http://127.0.0.1:8765/api/readiness", timeout=10) as response:
+with urllib.request.urlopen("http://127.0.0.1:8765/api/readiness", timeout=80) as response:
     readiness = json.load(response)
 for feature in readiness.get("features", []):
     if feature.get("name") == "Campaign review render proof":
@@ -56,13 +57,10 @@ fi
 "$ROOT_DIR/script/install_backend_launch_agent.sh" || true
 "$PYTHON_BIN" "$ROOT_DIR/script/check_backend_launch_agent.py" || true
 "$ROOT_DIR/script/package_codex_handoff.sh"
-if [[ "$REQUIRE_CUSTOMER_GREEN" == "1" ]]; then
-  "$ROOT_DIR/script/package_release.sh" --customer-release
-else
-  "$ROOT_DIR/script/package_release.sh" --adhoc || true
-fi
 "$ROOT_DIR/script/setup_buddy_no_key.sh"
-"$PYTHON_BIN" "$ROOT_DIR/script/desktop_qa.py"
+launchctl kickstart -k "gui/$(id -u)/com.bilbop.ClippingOpsCockpit.backend" >/dev/null 2>&1 || true
+"$ROOT_DIR/script/start_backend.sh" start
+node "$ROOT_DIR/script/web_browser_qa.mjs"
 node "$ROOT_DIR/script/build_ceo_artifacts.mjs"
 node "$ROOT_DIR/script/build_ceo_artifacts.mjs"
 

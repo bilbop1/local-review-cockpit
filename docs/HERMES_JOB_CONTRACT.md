@@ -18,12 +18,16 @@ The backend job ledger is the normal interface between GUI intent, Hermes orches
 | `refresh_campaign_project` | Refresh one campaign brief | `{"campaign_slug":"yourrage"}` |
 | `discover_campaign_sources` | Verify/download campaign source candidates | `{"campaign_slug":"yourrage"}` |
 | `build_campaign_reviews` | Build campaign review kits | `{"campaign_slug":"yourrage","limit":5,"style":"campaign_short_final_v1"}` |
+| `scheduled_campaign_review_build` | Build one due fresh review kit from the 24h->5d ladder | `{"campaign_slug":"yourrage","limit":1,"style":"campaign_short_final_v1","selection_mode":"fresh_best_candidate"}` |
+| `retime_review_kit_captions` | Retime/rerender one review kit through ensemble word alignment | `{"clip_id":"clip_x","min_votes":3}` or `{"kit_id":"kit_x","min_votes":3}` |
 | `platform_smoke` | Run Twitch/Kick smoke checks | `{"twitch_login":"yourragegaming"}` or `{"kick_slug":"name"}` |
 | `selected_feeder_sweep` | Check configured streamer feeders | `{}` |
 | `review_risk_sweep` | Audit review kits and blockers | `{}` |
+| `review_learning_summary` | Summarize killed kits into next-cycle guidance | `{}` |
 | `prepare_publish_package` | Prepare an approved kit for posting | `{"kit_id":"kit_x"}` |
 | `publish_dry_run` | Validate publish payload without posting | `{"publish_job_id":"pubjob_x"}` |
 | `publish_live` | Live Upload-Post job after final confirmation | `{"publish_job_id":"pubjob_x"}` |
+| `publish_schedule_tick` | Promote due scheduled dry-runs into Hermes publish jobs | `{}` |
 | `publish_status_sweep` | Refresh/report publish status | `{}` |
 
 Unsupported intents must be blocked, not guessed.
@@ -45,7 +49,7 @@ Claim next queued job:
 ```bash
 curl -s -X POST http://127.0.0.1:8765/api/jobs/claim-next \
   -H 'Content-Type: application/json' \
-  -d '{"worker":"hermes-dispatcher","hermes_profile":"default"}'
+  -d '{"worker":"hermes-dispatcher","hermes_profile":"clipping-ops-minimax"}'
 ```
 
 Heartbeat:
@@ -102,6 +106,41 @@ Build campaign reviews:
 {"intent":"build_campaign_reviews","campaign_slug":"jasontheween","requested_by":"gui","payload":{"campaign_slug":"jasontheween","limit":5,"style":"campaign_short_final_v1"}}
 ```
 
+Hermes build intents must run caption alignment before reporting success. The dispatcher calls `script/ensemble_retime_review_kits.py` for each created clip; if alignment blocks, the Hermes job blocks instead of handing the operator a mistimed review video.
+
+Hermes build intents must also respect the deterministic top-card quality gate before render. Campaign-short builders write `blocked_hook_quality` when every proposed hook is generic, duplicated, a raw-title echo, a quote dump, too short/long, or contains internal language. Treat that as a normal retry/selection blocker: pick a better clip or propose better hook copy, then queue a fresh build. Do not force a bad hook into Review Kits.
+
+Hermes/MiniMax may pass hook proposals through the job payload as `hook_candidates_by_clip`, keyed by clip ID. Each candidate is a JSON object with at least `text` and `source`; the builder evaluates candidates in order and appends the deterministic local fallback after them.
+
+```json
+{
+  "intent": "build_campaign_reviews",
+  "campaign_slug": "yourrage",
+  "payload": {
+    "campaign_slug": "yourrage",
+    "limit": 1,
+    "style": "campaign_short_final_v1",
+    "hook_candidates_by_clip": {
+      "clip_example": [
+        {"text": "YourRAGE opened a link and instantly regretted it", "source": "hermes"}
+      ]
+    }
+  }
+}
+```
+
+Scheduled fresh review build:
+
+```json
+{"intent":"scheduled_campaign_review_build","campaign_slug":"yourrage","requested_by":"review-scheduler","payload":{"campaign_slug":"yourrage","limit":1,"style":"campaign_short_final_v1","selection_mode":"fresh_best_candidate","freshness_ladder_hours":[24,48,72,96,120]}}
+```
+
+Retime one existing review kit:
+
+```json
+{"intent":"retime_review_kit_captions","campaign_slug":"yourrage","requested_by":"clip-review","payload":{"clip_id":"clip_example","min_votes":3}}
+```
+
 Review/risk sweep:
 
 ```json
@@ -114,6 +153,14 @@ Publish dry-run:
 {"intent":"publish_dry_run","requested_by":"clip-ops","payload":{"publish_job_id":"pubjob_example"}}
 ```
 
+Publish schedule tick:
+
+```json
+{"intent":"publish_schedule_tick","requested_by":"publish-scheduler","payload":{}}
+```
+
+Approving a non-demo review kit through the GUI creates or updates its publish package, then schedules one dry-run publish job into the next future local `:14` slot. The default cadence is eight slots per day: `00:14`, `03:14`, `06:14`, `09:14`, `12:14`, `15:14`, `18:14`, and `21:14`. Scheduled dry-runs stay in `publish_jobs` as `scheduled` until `/api/publish/schedule/tick` promotes due jobs into `publish_dry_run` Hermes work.
+
 Live publish is allowed only after the backend publish job exists, the kit is approved, provider key is configured locally, warm-up is complete, live mode is enabled, and the GUI final confirmation has created the `publish_live` job.
 
 ## Read-Only Endpoints
@@ -125,6 +172,8 @@ Use freely for status:
 - `GET /api/agents`
 - `GET /api/jobs`
 - `GET /api/review-kits`
+- `GET /api/review-schedule`
+- `GET /api/review-learning`
 - `GET /api/campaign-projects`
 - `GET /api/platforms`
 - `GET /api/publish/status`
@@ -140,8 +189,14 @@ Use only when the operator or GUI requested the action:
 - `POST /api/jobs/{id}/complete`
 - `POST /api/jobs/{id}/block`
 - `POST /api/jobs/{id}/fail`
+- `POST /api/review-schedule/tick`
+- `POST /api/review-schedule/{campaign_slug}/pause`
+- `POST /api/review-schedule/{campaign_slug}/resume`
 - `POST /api/review-kits/{id}/publish-prep`
+- `POST /api/review-kits/{id}/approve`
+- `POST /api/review-kits/{id}/reject`
+- `POST /api/publish/schedule/tick`
 - `POST /api/publish/jobs`
 - `POST /api/publish/jobs/{id}/confirm-live`
 
-Approval, rejection, and live confirmation are human-owned GUI decisions.
+Approval, rejection, and live confirmation are human-owned GUI decisions. Rejection stores learning signal and must not directly revise the killed draft unless the operator explicitly requests a revision pass.

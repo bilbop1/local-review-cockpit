@@ -45,6 +45,7 @@ from clipping_ops_backend.caption_style import (
     normalize_caption_variant,
     timed_caption_groups,
 )
+from clipping_ops_backend.hook_quality import HookQualityError, require_selected_hook, select_hook_candidate
 from clipping_ops_backend.renderer import extract_contact_sheet, extract_thumbnail, validate_video, write_json
 
 
@@ -427,11 +428,15 @@ def resolve_rules(clip: Dict[str, Any], route: Dict[str, Any], grouped_rules: Di
     return []
 
 
-def pick_candidate(clip_id: str = "", campaign_slug: str = "") -> Candidate:
+def pick_candidate(clip_id: str = "", campaign_slug: str = "", *, quota_recovery: bool = False) -> Candidate:
     if campaign_slug:
-        clips = db.campaign_clips(campaign_slug)
+        clips = db.review_candidate_order(db.campaign_clips(campaign_slug), campaign_slug, quota_recovery=quota_recovery)
     else:
-        clips = db.rows("SELECT * FROM clip_candidates ORDER BY view_count DESC, discovered_at DESC")
+        clips = db.review_candidate_order(
+            db.rows("SELECT * FROM clip_candidates ORDER BY view_count DESC, discovered_at DESC"),
+            campaign_slug,
+            quota_recovery=quota_recovery,
+        )
     routes = route_candidates(campaign_slug)
     grouped = rules_by_slug()
 
@@ -461,7 +466,12 @@ def pick_candidate(clip_id: str = "", campaign_slug: str = "") -> Candidate:
         rules = resolve_rules(clip, route, grouped, campaign_slug)
         if not rules:
             continue
-        gate = db.editorial_candidate_gate(clip, campaign_slug)
+        gate = db.editorial_candidate_gate(
+            clip,
+            campaign_slug,
+            quota_recovery=quota_recovery,
+            allow_unproven_source=quota_recovery,
+        )
         if gate.get("status") != "green" and os.environ.get("CLIPPING_OPS_ALLOW_WEAK_EDITORIAL_PICK", "").strip().lower() not in {"1", "true", "yes"}:
             editorial_rejections.append(f"{clip.get('id', '')}: {'; '.join(str(item) for item in gate.get('blockers', [])[:3])}")
             continue
@@ -569,13 +579,18 @@ def ensure_local_media(candidate: Candidate) -> Path:
     clip_end = float(clip.get("clip_end_seconds", 0) or 0)
     has_time_slice = clip_end > clip_start >= 0
     if not has_time_slice and direct_download_with_curl(str(clip["source_url"]), output):
+        risk_flags = [str(flag) for flag in clip.get("risk_flags", []) if str(flag) != "metadata_only_no_download"]
+        for extra in ["local_media_downloaded", "source_media_verified_local"]:
+            if extra not in risk_flags:
+                risk_flags.append(extra)
         db.update_clip_media(
             str(clip["id"]),
             output,
             "yt_dlp_direct_url",
-            [str(flag) for flag in clip.get("risk_flags", [])] + ["local_media_downloaded", "source_media_verified_local"],
+            risk_flags,
         )
         clip["local_media_path"] = str(output)
+        clip["risk_flags"] = risk_flags
         return output
 
     command = [
@@ -817,6 +832,29 @@ HOOK_OVERRIDES = {
     "clip_ad2bf19b8fb1": "Max heard his own JB song moment live on stream",
     "clip_9088267d79b1": "Max asked Ye about the stage design after the record",
     "clip_acaeded1ce1c": "YourRAGE watched a scary car meet moment unfold",
+    "clip_42b5c6dc246e": "Jason shut down the ExtraEmily comparison",
+    "clip_d30b9d52802c": "YourRAGE opened a link and instantly regretted it",
+    "clip_c427224bbefb": "Jason got stopped by the max-capacity rule",
+    "clip_e96ab8000070": "Jason got confused by the little book",
+    "clip_079f56d98fab": "Jason made a wild Arlington exit plan",
+    "clip_5dfb90c578d3": "Jason started planning a chaotic prom-room setup",
+    "clip_e7e1cdb26654": "Jason dared chat to argue with the AI take",
+    "clip_b071c40cabbf": "YourRAGE lost it over a wild anime clip",
+    "clip_c314daceaba2": "YourRAGE tried to dodge the Agent and Emily setup",
+    "clip_aa5738bb5c35": "Jason caught her emoting in the background",
+    "clip_23b068bff7e3": "Jason called double or nothing on stream",
+    "clip_497dd35b719c": "Jason's exploration segment went off the rails",
+    "clip_7abee5b5aa0e": "Max asked Ye about breaking the record",
+    "clip_eb439f325304": "Jason turned a broken barcode into a free-item bit",
+    "clip_169a1f75a9ea": "YourRAGE realized Ben knew the hand-washing clip",
+    "clip_a7fcdad0f448": "YourRAGE put Emily on the contact list",
+    "clip_f60f4f0a87e7": "YourRAGE saw chat turn the joke on Agent",
+    "clip_e99d8dab087a": "YourRAGE made the Japan invite awkward",
+    "clip_b451f2488e3e": "Max got serious about growing up in another era",
+    "clip_84c84939a7c7": "Max's countdown went wrong instantly",
+    "clip_00d354aeea5d": "YourRAGE caught the cosplay name mistake",
+    "clip_a848e2995aa3": "Diana Lim stunned the ring at Jason's boxing event",
+    "clip_055741974c14": "Jason sized up Jeff before the matchup",
 }
 
 MIN_CAPTION_BEAT_DURATION = 0.16
@@ -898,11 +936,80 @@ def _trim_hook(text: str, max_words: int = 14) -> str:
     return trimmed[:1].upper() + trimmed[1:] if trimmed else ""
 
 
+def _pattern_summary_hook(title: str, handle: str, transcript_text: str = "") -> str:
+    name = streamer_display_name(handle)
+    clean = _strip_hook_prefixes(title, handle)
+    haystack = f"{clean}\n{str(transcript_text)}".lower()
+    if "extraemily" in haystack or "extra emily" in haystack:
+        return f"{name} shut down the ExtraEmily comparison"
+    if "strange link" in haystack or "what is this land" in haystack or "pmo" in haystack:
+        return f"{name} opened a link and instantly regretted it"
+    if "max capacity" in haystack or ("no more" in haystack and "capacity" in haystack):
+        return f"{name} got stopped by the max-capacity rule"
+    if "little book" in haystack:
+        return f"{name} got confused by the little book"
+    if "arlington" in haystack and "league of legends" in haystack:
+        return f"{name} made a wild Arlington exit plan"
+    if "prom room" in haystack or ("confetti" in haystack and "balloons" in haystack):
+        return f"{name} started planning a chaotic prom-room setup"
+    if "ai cant beat" in haystack or "ai can't beat" in haystack or ("want no action" in haystack and "republic" in haystack):
+        return f"{name} dared chat to argue with the AI take"
+    if "anime" in haystack and ("egregious" in haystack or "oh my god" in haystack or "clip" in haystack):
+        return f"{name} lost it over a wild anime clip"
+    if "agent" in haystack and "emily" in haystack and ("ruin my life" in haystack or "stick to the program" in haystack):
+        return f"{name} tried to dodge the Agent and Emily setup"
+    if "emoting in the back" in haystack:
+        return f"{name} caught her emoting in the background"
+    if "double" in haystack and ("22" in haystack or "got this" in haystack):
+        return f"{name} called double or nothing on stream"
+    if "exploration" in haystack and ("filming" in haystack or "ground" in haystack):
+        return f"{name}'s exploration segment went off the rails"
+    if ("ye " in haystack or " ye" in haystack) and ("record" in haystack or "stage design" in haystack):
+        return f"{name} asked Ye about breaking the record"
+    if "barcode" in haystack or "won't scan" in haystack or "wont scan" in haystack:
+        return f"{name} turned a broken barcode into a free-item bit"
+    if "wash our hands" in haystack or "such a good clip" in haystack:
+        return f"{name} realized Ben knew the hand-washing clip"
+    if "contact list" in haystack or "putting you on the list" in haystack:
+        return f"{name} put Emily on the contact list"
+    if "take down care" in haystack or ("agent you next" in haystack and "emily" in haystack):
+        return f"{name} saw chat turn the joke on Agent"
+    if "japan" in haystack:
+        return f"{name} made the Japan invite awkward"
+    if "black panther" in haystack or "malcolm x" in haystack:
+        return f"{name} got serious about growing up in another era"
+    if "five four three two one" in haystack or "hell no" in haystack:
+        return f"{name}'s countdown went wrong instantly"
+    if "cosplay" in haystack or "misnames" in haystack:
+        return f"{name} caught the cosplay name mistake"
+    if "diana" in haystack and ("boxing" in haystack or "combo" in haystack or "ring" in haystack):
+        return "Diana Lim stunned the ring at Jason's boxing event"
+    if "jeff" in haystack and ("attributes" in haystack or "boosters" in haystack or "matchup" in haystack):
+        return f"{name} sized up Jeff before the matchup"
+    return ""
+
+
+def _quote_excerpt_hook(title: str, handle: str, transcript_text: str = "") -> str:
+    name = streamer_display_name(handle)
+    excerpt = _strip_hook_prefixes(title, handle)
+    if weak_title(excerpt):
+        transcript_clean = " ".join(str(transcript_text).split())
+        excerpt = re.split(r"(?<=[.!?])\s+", transcript_clean)[0].strip() if transcript_clean else ""
+    excerpt = re.sub(r"^\s*(?:said|says)\s*[:\-]\s*", "", excerpt, flags=re.IGNORECASE)
+    excerpt = re.sub(r"^(?:you know|okay|so|and|but|like)\s+", "", excerpt, flags=re.IGNORECASE).strip()
+    if not excerpt:
+        return hook_from_transcript(transcript_text, handle)
+    return _emphasize_hook_words(_trim_hook(f"{name} said: {excerpt}", max_words=12))
+
+
 def non_spoiler_summary_hook(title: str, handle: str, transcript_text: str = "") -> str:
     name = streamer_display_name(handle)
     clean = _strip_hook_prefixes(title, handle)
     lowered = clean.lower()
     haystack = f"{lowered}\n{str(transcript_text).lower()}"
+    patterned = _pattern_summary_hook(clean, handle, transcript_text)
+    if patterned:
+        return patterned
 
     if "green screen" in haystack or "greenscreen" in haystack:
         if "silky" in haystack or "jason" in haystack:
@@ -922,11 +1029,11 @@ def non_spoiler_summary_hook(title: str, handle: str, transcript_text: str = "")
         return f"{name} could not hold it together on stream"
     if weak_title(clean):
         fallback = _strip_hook_prefixes(hook_from_transcript(transcript_text, handle), handle)
-        return _trim_hook(f"{name} had chat locked in over this moment" if weak_title(fallback) else fallback)
+        return _trim_hook(f"{name} had the whole chat watching" if weak_title(fallback) else fallback)
 
     quote_like = re.match(r"^(?:i|i'm|im|you|your|what|why|how|if|bro|ray|chat|nah|no)\b", lowered)
     if quote_like:
-        return _trim_hook(f"{name} had chat locked in over this moment")
+        return _quote_excerpt_hook(clean, handle, transcript_text)
     return _trim_hook(clean)
 
 
@@ -935,6 +1042,9 @@ def viewer_hook(title: str, handle: str, transcript_text: str = "", clip_id: str
         return HOOK_OVERRIDES[clip_id]
     clean = _strip_hook_prefixes(title, handle)
     lowered = clean.lower()
+    patterned = _pattern_summary_hook(clean, handle, transcript_text)
+    if patterned:
+        return patterned
     if handle.lower() == "lacy":
         if "arrest" in lowered:
             return "Lacy gets ARRESTED live on stream"
@@ -955,7 +1065,10 @@ def viewer_hook(title: str, handle: str, transcript_text: str = "", clip_id: str
         return f"{streamer_display_name(handle)} had the whole chat watching"
     hook = _emphasize_hook_words(non_spoiler_summary_hook(clean, handle, transcript_text))
     if len(re.findall(r"[a-z0-9]{2,}", hook.lower())) < 5:
-        return f"{streamer_display_name(handle)} had chat locked in over this moment"
+        quoted = _quote_excerpt_hook(clean, handle, transcript_text)
+        if "had the whole chat watching" not in quoted.lower():
+            return quoted
+        return hook_from_transcript(transcript_text, handle)
     return hook
 
 
@@ -989,6 +1102,17 @@ def _top_hook_wrapped_lines(
     max_width: int,
     max_lines: int = 2,
 ) -> List[str]:
+    def fit_line(line: str) -> str:
+        words = line.split()
+        while len(words) > 1 and mixed_text_size(draw, " ".join(words), style_font, emoji_font)[0] > max_width:
+            last_is_emoji = any(is_emoji_char(char) for char in words[-1])
+            remove_at = -2 if last_is_emoji and len(words) > 2 else -1
+            words.pop(remove_at)
+        fitted = " ".join(words)
+        while mixed_text_size(draw, fitted, style_font, emoji_font)[0] > max_width and len(fitted) > 8:
+            fitted = fitted[:-2].rstrip(" ,.;:-")
+        return fitted
+
     words = text.split()
     lines: List[str] = []
     current = ""
@@ -1004,6 +1128,7 @@ def _top_hook_wrapped_lines(
     if current and len(lines) < max_lines:
         remaining_words = words[sum(len(line.split()) for line in lines) :]
         current = " ".join(remaining_words) if remaining_words else current
+        current = fit_line(current)
         lines.append(current)
     return [line for line in lines if line]
 
@@ -1058,12 +1183,87 @@ def reference_top_hook_text(hook: str) -> str:
     return clean
 
 
-def headline_card(path: Path, title: str, handle: str, transcript_text: str = "", clip_id: str = "", *, show: bool = True) -> str:
+def recent_campaign_hooks(campaign_slug: str, exclude_clip_id: str = "", limit: int = 24) -> List[str]:
+    normalized = db.normalize_campaign_slug(campaign_slug)
+    if not normalized:
+        return []
+    hooks: List[str] = []
+    records = db.rows(
+        """
+        SELECT render_kits.review_video_path, render_nominations.clip_candidate_ids_json
+        FROM render_kits
+        JOIN render_nominations ON render_nominations.id = render_kits.nomination_id
+        WHERE render_kits.campaign_slug = ?
+           OR render_nominations.campaign_slug = ?
+        ORDER BY render_kits.created_at DESC
+        LIMIT ?
+        """,
+        (normalized, normalized, max(1, min(int(limit), 100))),
+    )
+    for record in records:
+        try:
+            clip_ids = json.loads(str(record.get("clip_candidate_ids_json", "[]") or "[]"))
+        except json.JSONDecodeError:
+            clip_ids = []
+        if exclude_clip_id and exclude_clip_id in {str(item) for item in clip_ids if str(item)}:
+            continue
+        manifest_path = Path(str(record.get("review_video_path", ""))).parent / "render_text_manifest.json"
+        if not manifest_path.exists():
+            continue
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        rendered = payload.get("rendered_text", {}) if isinstance(payload, dict) else {}
+        hook = str(rendered.get("hook_card", "") if isinstance(rendered, dict) else "").strip()
+        if hook:
+            hooks.append(hook)
+    return hooks
+
+
+def approve_viewer_hook(
+    clip: Dict[str, Any],
+    handle: str,
+    transcript_text: str,
+    campaign_slug: str,
+    hook_candidates: List[Dict[str, Any]] | None = None,
+) -> tuple[str, Dict[str, Any]]:
+    generated = viewer_hook(
+        str(clip.get("title", "")),
+        handle,
+        transcript_text=transcript_text,
+        clip_id=str(clip.get("id", "")),
+    )
+    candidates = [dict(item) for item in hook_candidates or [] if isinstance(item, dict)]
+    if generated and generated not in {str(item.get("text", "") or item.get("hook", "") or item.get("hook_card", "")) for item in candidates}:
+        candidates.append({"text": generated, "source": "local_viewer_hook"})
+    payload = select_hook_candidate(
+        candidates,
+        clip_title=str(clip.get("title", "")),
+        handle=handle,
+        campaign_slug=campaign_slug,
+        transcript_text=transcript_text,
+        recent_hooks=recent_campaign_hooks(campaign_slug, exclude_clip_id=str(clip.get("id", ""))),
+        learning_context=db.learning_context_for_campaign(campaign_slug, limit=8) if campaign_slug else {},
+    )
+    return require_selected_hook(payload), payload
+
+
+def headline_card(
+    path: Path,
+    title: str,
+    handle: str,
+    transcript_text: str = "",
+    clip_id: str = "",
+    *,
+    show: bool = True,
+    hook_override: str = "",
+) -> str:
     image = Image.new("RGBA", (1080, 1920), (0, 0, 0, 0))
     if not show:
         image.save(path)
         return ""
-    hook = reference_top_hook_text(viewer_hook(title, handle, transcript_text=transcript_text, clip_id=clip_id))
+    hook = reference_top_hook_text(hook_override or viewer_hook(title, handle, transcript_text=transcript_text, clip_id=clip_id))
 
     # TikTok's built-in text card is authored in the source 720x1280 design
     # space and then upscaled with the video. Drawing natively at 1080 makes
@@ -1537,12 +1737,22 @@ def normalize_caption_beat_timings(beats: List[Dict[str, Any]]) -> List[Dict[str
         except (TypeError, ValueError):
             source_start = raw_start
             source_end = raw_end
-        delayed_start, delayed_end = apply_caption_audio_sync_delay(raw_start, raw_end)
-        start = max(delayed_start, previous_end + CAPTION_BEAT_GAP if previous_end >= 0 else delayed_start)
-        end = max(delayed_end, start + MIN_CAPTION_BEAT_DURATION)
+        shifted_start, shifted_end = apply_caption_audio_sync_delay(raw_start, raw_end)
+        start = shifted_start
+        if readable and start < previous_end + CAPTION_BEAT_GAP:
+            previous = readable[-1]
+            previous_start = float(previous["start"])
+            trimmed_previous_end = max(previous_start + MIN_CAPTION_BEAT_DURATION, start - CAPTION_BEAT_GAP)
+            if trimmed_previous_end < float(previous["end"]):
+                previous["end"] = round(trimmed_previous_end, 3)
+                previous_end = float(previous["end"])
+            if start < previous_end + CAPTION_BEAT_GAP:
+                start = previous_end + CAPTION_BEAT_GAP
+        end = max(shifted_end, start + MIN_CAPTION_BEAT_DURATION)
         if end <= start:
             end = start + MIN_CAPTION_BEAT_DURATION
-        delayed_source_end = source_end + CAPTION_AUDIO_SYNC_DELAY_SECONDS
+        audio_lead = max(0.0, source_start - start)
+        audio_lag = max(0.0, start - source_start)
         clean = {
             "start": round(start, 3),
             "end": round(end, 3),
@@ -1550,7 +1760,9 @@ def normalize_caption_beat_timings(beats: List[Dict[str, Any]]) -> List[Dict[str
             "source_start": round(source_start, 3),
             "source_end": round(source_end, 3),
             "audio_sync_delay_seconds": CAPTION_AUDIO_SYNC_DELAY_SECONDS,
-            "lead_seconds": round(max(0.0, delayed_source_end - start), 3),
+            "lead_seconds": round(audio_lead, 3),
+            "audio_lead_seconds": round(audio_lead, 3),
+            "audio_lag_seconds": round(audio_lag, 3),
             "max_pre_audio_lead_seconds": CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS,
         }
         readable.append(clean)
@@ -1575,8 +1787,15 @@ def caption_beats_from_transcript(transcript: Dict[str, Any]) -> List[Dict[str, 
             except (TypeError, ValueError):
                 continue
             start, end = apply_caption_audio_sync_delay(raw_start, raw_end)
-            if previous_end >= 0 and start < previous_end + CAPTION_BEAT_GAP:
-                start = previous_end + CAPTION_BEAT_GAP
+            if consensus_beats and start < previous_end + CAPTION_BEAT_GAP:
+                previous = consensus_beats[-1]
+                previous_start = float(previous["start"])
+                trimmed_previous_end = max(previous_start + MIN_CAPTION_BEAT_DURATION, start - CAPTION_BEAT_GAP)
+                if trimmed_previous_end < float(previous["end"]):
+                    previous["end"] = round(trimmed_previous_end, 3)
+                    previous_end = float(previous["end"])
+                if start < previous_end + CAPTION_BEAT_GAP:
+                    start = previous_end + CAPTION_BEAT_GAP
             end = max(end, start + MIN_CAPTION_BEAT_DURATION)
             try:
                 source_start = float(segment.get("source_start", raw_start) or raw_start)
@@ -1584,6 +1803,8 @@ def caption_beats_from_transcript(transcript: Dict[str, Any]) -> List[Dict[str, 
             except (TypeError, ValueError):
                 source_start = raw_start
                 source_end = raw_end
+            audio_lead = max(0.0, source_start - start)
+            audio_lag = max(0.0, start - source_start)
             consensus_beats.append(
                 {
                     "start": round(start, 3),
@@ -1592,7 +1813,9 @@ def caption_beats_from_transcript(transcript: Dict[str, Any]) -> List[Dict[str, 
                     "source_start": round(source_start, 3),
                     "source_end": round(source_end, 3),
                     "audio_sync_delay_seconds": CAPTION_AUDIO_SYNC_DELAY_SECONDS,
-                    "lead_seconds": round(max(0.0, source_end + CAPTION_AUDIO_SYNC_DELAY_SECONDS - start), 3),
+                    "lead_seconds": round(audio_lead, 3),
+                    "audio_lead_seconds": round(audio_lead, 3),
+                    "audio_lag_seconds": round(audio_lag, 3),
                     "max_pre_audio_lead_seconds": CAPTION_MAX_PRE_AUDIO_LEAD_SECONDS,
                     "timing_mode": str(segment.get("timing_mode", "ensemble_consensus")),
                     "anchor_source": str(segment.get("anchor_source", "")),
@@ -1692,6 +1915,8 @@ def render_review_video(
     profile: str = "",
     caption_variant: str = "",
     campaign_slug: str = "",
+    hook_override: str = "",
+    hook_quality: Dict[str, Any] | None = None,
 ) -> tuple[Path, Dict[str, Any]]:
     review_video = kit_dir / "review.mp4"
     stale_header = kit_dir / "header.png"
@@ -1712,6 +1937,7 @@ def render_review_video(
         transcript_text=transcript_text,
         clip_id=clip_id,
         show=True,
+        hook_override=hook_override,
     )
     source_text = source_badge(
         source_badge_path,
@@ -1841,6 +2067,8 @@ def render_review_video(
                 "source_end": round(float(beat.get("source_end", beat["end"])), 3),
                 "audio_sync_delay_seconds": round(float(beat.get("audio_sync_delay_seconds", 0)), 3),
                 "lead_seconds": round(float(beat.get("lead_seconds", 0)), 3),
+                "audio_lead_seconds": round(float(beat.get("audio_lead_seconds", beat.get("lead_seconds", 0))), 3),
+                "audio_lag_seconds": round(float(beat.get("audio_lag_seconds", 0)), 3),
                 "max_pre_audio_lead_seconds": round(float(beat.get("max_pre_audio_lead_seconds", 0)), 3),
                 "timing_mode": str(beat.get("timing_mode", "style_late_pop")),
                 "anchor_source": str(beat.get("anchor_source", "")),
@@ -1863,6 +2091,7 @@ def render_review_video(
         "reference_watermark_visible": bool(reference_watermark_info),
         "campaign_watermark": watermark_info,
         "watermark_visible": bool(watermark_info),
+        "hook_quality": hook_quality or {},
     }
     lowered = "\n".join([hook_text, source_text, *rendered_text["caption_beats"]]).lower()
     blocked = [token for token in INTERNAL_RENDER_TEXT_TOKENS if token in lowered]
@@ -1968,6 +2197,7 @@ def write_artifacts(
     beats: List[Dict[str, Any]],
     profile: str,
     rendered_text: Dict[str, Any],
+    quota_recovery: bool = False,
 ) -> Dict[str, Path]:
     clip = candidate.clip
     route = candidate.route
@@ -2031,7 +2261,13 @@ def write_artifacts(
             ),
         },
     )
-    editorial_review = db.editorial_review_for_rendered_kit(clip, kit_dir, campaign_slug, require_sidecar=False)
+    editorial_review = db.editorial_review_for_rendered_kit(
+        clip,
+        kit_dir,
+        campaign_slug,
+        require_sidecar=False,
+        quota_recovery=quota_recovery,
+    )
     write_json(editorial_review_path, editorial_review)
 
     write_text(
@@ -2239,10 +2475,18 @@ def write_artifacts(
     }
 
 
-def build_review_kit(clip_id: str = "", profile: str = "evidence_review_v1", campaign_slug: str = "", force: bool = False, caption_variant: str = "") -> Dict[str, Any]:
+def build_review_kit(
+    clip_id: str = "",
+    profile: str = "evidence_review_v1",
+    campaign_slug: str = "",
+    force: bool = False,
+    caption_variant: str = "",
+    quota_recovery: bool = False,
+    hook_candidates: List[Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
     db.init_db()
     campaign_slug = db.normalize_campaign_slug(campaign_slug)
-    candidate = pick_candidate(clip_id, campaign_slug=campaign_slug)
+    candidate = pick_candidate(clip_id, campaign_slug=campaign_slug, quota_recovery=quota_recovery)
     clip = candidate.clip
     route = candidate.route
     media_path = ensure_local_media(candidate)
@@ -2250,11 +2494,21 @@ def build_review_kit(clip_id: str = "", profile: str = "evidence_review_v1", cam
     beats, caption_generation = best_caption_beats_for_transcript(transcript)
     if not beats:
         raise RuntimeError("Transcript exists but no usable caption beats were produced.")
+    handle = str(route.get("creator_handle", "")).strip().lower()
+    project_slug = db.campaign_slug_for_clip(clip) or campaign_slug
+    selected_hook = ""
+    hook_quality_payload: Dict[str, Any] = {}
+    if profile == db.CAMPAIGN_SHORT_PROFILE:
+        selected_hook, hook_quality_payload = approve_viewer_hook(
+            clip,
+            handle or project_slug or "campaign",
+            str(transcript.get("full_text", "")),
+            project_slug,
+            hook_candidates=hook_candidates,
+        )
     nomination_id = create_nomination(candidate, transcript, beats, profile)
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    handle = str(route.get("creator_handle", "")).strip().lower()
-    project_slug = db.campaign_slug_for_clip(clip) or campaign_slug
     if profile == db.CAMPAIGN_SHORT_PROFILE:
         slug = f"campaign-short-{project_slug}"
         handle = project_slug or handle or "campaign"
@@ -2311,9 +2565,11 @@ def build_review_kit(clip_id: str = "", profile: str = "evidence_review_v1", cam
             profile=profile,
             caption_variant=caption_variant,
             campaign_slug=project_slug,
+            hook_override=selected_hook,
+            hook_quality=hook_quality_payload,
         )
         rendered_text["caption_generation"] = caption_generation
-        artifacts = write_artifacts(candidate, transcript, kit_dir, review_video, beats, profile, rendered_text)
+        artifacts = write_artifacts(candidate, transcript, kit_dir, review_video, beats, profile, rendered_text, quota_recovery=quota_recovery)
         if profile in {db.FINAL_PROOF_PROFILE, db.CAMPAIGN_SHORT_PROFILE}:
             if profile == db.CAMPAIGN_SHORT_PROFILE:
                 kit_title = campaign_kit_title(clip, project_slug, transcript)
@@ -2373,6 +2629,23 @@ def build_review_kit(clip_id: str = "", profile: str = "evidence_review_v1", cam
         release_kit_lock(lock_file)
 
 
+def parse_hook_candidates_json(raw: str) -> List[Dict[str, Any]]:
+    if not str(raw or "").strip():
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"--hook-candidates-json must be valid JSON: {exc}") from exc
+    if isinstance(parsed, dict):
+        parsed = parsed.get("candidates", [])
+    if not isinstance(parsed, list):
+        raise SystemExit("--hook-candidates-json must be a JSON list or an object with a candidates list")
+    candidates = [item for item in parsed if isinstance(item, dict)]
+    if len(candidates) != len(parsed):
+        raise SystemExit("--hook-candidates-json candidates must be JSON objects")
+    return candidates
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--clip-id", default="", help="Specific clip candidate id to backfill and render.")
@@ -2385,8 +2658,21 @@ def main() -> None:
     )
     parser.add_argument("--force", action="store_true", help="Rerender even when an existing green kit already satisfies the profile.")
     parser.add_argument("--caption-variant", default="", choices=["", "A", "B", "D", "E"], help="Production A/B caption treatment. C is intentionally excluded.")
+    parser.add_argument("--quota-recovery", action="store_true", help="Relax view/title prefiltering for the scheduled 24/day recovery path while still requiring source/render proof.")
+    parser.add_argument("--hook-candidates-json", default="", help="Hermes/MiniMax hook candidates as JSON list or {'candidates':[...]} for the top-card quality gate.")
     args = parser.parse_args()
-    result = build_review_kit(args.clip_id, args.profile, args.campaign_slug, force=args.force, caption_variant=args.caption_variant)
+    try:
+        result = build_review_kit(
+            args.clip_id,
+            args.profile,
+            args.campaign_slug,
+            force=args.force,
+            caption_variant=args.caption_variant,
+            quota_recovery=args.quota_recovery,
+            hook_candidates=parse_hook_candidates_json(args.hook_candidates_json),
+        )
+    except HookQualityError as exc:
+        result = exc.payload
     print(json.dumps(result, indent=2))
 
 

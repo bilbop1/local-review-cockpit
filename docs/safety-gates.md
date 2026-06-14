@@ -32,7 +32,7 @@ Allowed locally:
 ## Required CEO Evidence
 
 - `/api/health`, `/api/readiness`, and `/api/platforms` JSON from the running backend.
-- `swift build`, backend unit tests, app bundle verify, and desktop QA screenshot manifest.
+- web build/typecheck, backend unit tests, `/app` smoke proof, and non-foreground browser QA when available.
 - Redacted Twitch and Kick smoke check rows with HTTP status and rate-limit/degraded-state details.
 - Review-kit files: `review.mp4`, `caption.txt`, `transcript.txt`, `checklist.md`, `source.md`, and `risk.md`.
 - `ffprobe` JSON proving H.264/AAC 1080x1920 output.

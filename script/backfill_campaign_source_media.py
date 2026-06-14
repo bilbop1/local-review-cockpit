@@ -55,6 +55,30 @@ def clip_source_ready(clip: Dict[str, Any]) -> bool:
     return bool(local_value) and validate_source_media(Path(local_value))
 
 
+def risk_flags(clip: Dict[str, Any]) -> List[str]:
+    try:
+        raw = json.loads(str(clip.get("risk_flags_json") or "[]"))
+    except json.JSONDecodeError:
+        raw = []
+    if not isinstance(raw, list):
+        raw = []
+    return [str(item) for item in raw]
+
+
+def source_backfill_sort_key(clip: Dict[str, Any]) -> tuple[int, int, int, str]:
+    flags = risk_flags(clip)
+    windows: List[int] = []
+    for flag in flags:
+        if flag.startswith("fresh_window_") and flag.endswith("h"):
+            try:
+                windows.append(int(flag.removeprefix("fresh_window_").removesuffix("h")))
+            except ValueError:
+                pass
+    fresh_window = min(windows) if windows else 999
+    top_fresh = 0 if "editorial_indexed_top_fresh" in flags or "top_24h_candidate" in flags else 1
+    return (top_fresh, fresh_window, -int(clip.get("view_count", 0) or 0), str(clip.get("clip_created_at", "")))
+
+
 def backfill_campaign(slug: str, limit: int) -> Dict[str, Any]:
     refresh_campaign_project(slug)
     discover_campaign_sources(slug)
@@ -69,6 +93,7 @@ def backfill_campaign(slug: str, limit: int) -> Dict[str, Any]:
         if str(clip.get("source_url", "")).strip()
         and not clip_source_ready(clip)
     ]
+    candidates.sort(key=source_backfill_sort_key)
     for clip in candidates:
         if len(created) >= limit:
             break

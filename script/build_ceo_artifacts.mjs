@@ -173,8 +173,8 @@ async function main() {
     getJson("/api/review-kits"),
     getJson("/api/campaign-projects"),
   ]);
-  const manifestPath = path.join(root, "artifacts", "desktop-qa", "manifest.json");
-  let guiManifest = { ok: false, screenshots: [], controls: [], media: [], page_clicks: [], new_crash_reports: [] };
+  const manifestPath = path.join(root, "artifacts", "web-qa", "manifest.json");
+  let guiManifest = { ok: false, screenshots: [], route_checks: [], interaction_checks: [], console_errors: [], page_errors: [] };
   try {
     guiManifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
   } catch {
@@ -190,8 +190,6 @@ async function main() {
   const noKey = await readJsonMaybe(noKeyPath, { ok: false, no_key_mode: false });
   const handoffPath = path.join(root, "artifacts", "handoff", "codex-handoff.json");
   const handoff = await readJsonMaybe(handoffPath, { ok: false, source_build_handoff_ready: false, requires_notarization: false, zip_path: "", file_count: 0 });
-  const releasePath = path.join(root, "artifacts", "distribution", "release-verify.json");
-  const release = await readJsonMaybe(releasePath, { customer_ship_ready: false, bundle_ok: false, signed_ok: false, notarized_ok: false, blockers: [] });
   const reindexPath = path.join(root, "artifacts", "research-run", "campaign-streamer-reindex.json");
   const streamerReindex = await readJsonMaybe(reindexPath, { ranked: [], active_project_slugs: [] });
 
@@ -233,34 +231,36 @@ async function main() {
   scorecard.getRange("A:E").format.autofitRows();
 
   const qa = workbook.worksheets.add("GUI QA");
-  const screenshotRows = guiManifest.screenshots.map((item) => [
+  const screenshotRows = guiManifest.screenshots.map((item, index) => [
+    `Screenshot ${index + 1}`,
+    "green",
+    rel(item),
+    "",
+    "headless browser capture",
+  ]);
+  const controlRows = guiManifest.interaction_checks.map((item) => [
     item.name,
     item.ok ? "green" : "red",
-    rel(item.path),
-    item.sha256_16,
-    `${item.size?.[0] || ""}x${item.size?.[1] || ""}`,
+    "web cockpit",
+    item.kit_count || "",
+    item.skipped || "state changed without console/page error",
   ]);
-  const controlRows = guiManifest.controls.map((item) => [
-    item.name,
+  const pageRows = guiManifest.route_checks.map((item) => [
+    item.route,
     item.ok ? "green" : "red",
-    item.surface || item.input || item.route || "",
-    item.http_status || "",
-    JSON.stringify(item.result || item.after || "").slice(0, 250),
+    "headless browser route",
+    item.url || "",
+    "SPA shell rendered",
   ]);
-  const pageRows = guiManifest.page_clicks.map((item) => [
-    item.name,
-    item.ok ? "green" : "red",
-    "real mouse sidebar click",
-    item.window_title || "",
-    `pid ${item.pid_before} -> ${item.pid_after}`,
-  ]);
-  const mediaRows = guiManifest.media.map((item) => [
-    item.name,
-    item.ok ? "green" : "red",
-    item.path || "",
-    item.video ? `${item.video.codec} ${item.video.width}x${item.video.height}` : "",
-    item.audio ? `${item.audio.codec} ${item.audio.sample_rate}` : JSON.stringify(item.stats || "").slice(0, 120),
-  ]);
+  const mediaRows = [
+    [
+      "Review preview video element",
+      guiManifest.interaction_checks.some((item) => item.name === "platform overlay toggles" && item.ok) ? "green" : "yellow",
+      "/app/reviews",
+      "video element + platform overlay toggles",
+      "browser QA exercises review selection when kits exist",
+    ],
+  ];
   qa.getRange("A1:E1").values = [["GUI Evidence", "Status", "Surface", "HTTP/Size", "Proof"]];
   writeWorksheetRows(qa, 2, screenshotRows);
   const controlStart = screenshotRows.length + 3;
@@ -273,13 +273,13 @@ async function main() {
   qa.getRange(`A${mediaStart}:E${mediaStart}`).values = [["Media Evidence", "Status", "Path", "Video", "Audio/Stats"]];
   writeWorksheetRows(qa, mediaStart + 1, mediaRows);
   const crashStart = mediaStart + mediaRows.length + 2;
-  qa.getRange(`A${crashStart}:E${crashStart}`).values = [["Crash Evidence", "Status", "Surface", "Count", "Proof"]];
+  qa.getRange(`A${crashStart}:E${crashStart}`).values = [["Browser Error Evidence", "Status", "Surface", "Count", "Proof"]];
   qa.getRange(`A${crashStart + 1}:E${crashStart + 1}`).values = [[
-    "New ClippingOpsCockpit .ips reports",
-    guiManifest.new_crash_reports.length === 0 ? "green" : "red",
-    "DiagnosticReports delta",
-    guiManifest.new_crash_reports.length,
-    guiManifest.app_survived_all_page_clicks ? "app_survived_all_page_clicks=true" : "app_survived_all_page_clicks=false",
+    "Console/page errors",
+    (guiManifest.console_errors.length + guiManifest.page_errors.length) === 0 ? "green" : "red",
+    "headless browser",
+    guiManifest.console_errors.length + guiManifest.page_errors.length,
+    "console_errors + page_errors captured in manifest",
   ]];
   qa.getRange("A1:E1").format = { fill: "#1F2937", font: { bold: true, color: "#FFFFFF" }, wrapText: true };
   qa.getRange(`A${controlStart}:E${controlStart}`).format = { fill: "#1F2937", font: { bold: true, color: "#FFFFFF" }, wrapText: true };
@@ -353,13 +353,12 @@ async function main() {
     ["Payout submission", health.safety.payout_submission, "/api/health", "Out of scope remains hard-blocked."],
     ["Account connection", health.safety.account_connection, "/api/health", "No-key mode blocks credential exchange."],
     ["Campaign production", gate.status, "/api/campaign-gate", gate.blocker],
-    ["GUI QA", guiManifest.ok ? "green" : "red", rel(manifestPath), `${guiManifest.page_clicks.length} clicks; ${guiManifest.screenshots.length} screenshots; ${guiManifest.new_crash_reports.length} new crashes`],
+    ["Web cockpit QA", guiManifest.ok ? "green" : "red", rel(manifestPath), `${guiManifest.route_checks.length} routes; ${guiManifest.screenshots.length} screenshots; ${guiManifest.interaction_checks.length} interactions`],
     ["Burned-in subtitles", burnedCaptions.ok ? "green" : "red", rel(burnedCaptionPath), `${burnedCaptions.kit_count || 0} kit(s) verified from extracted frames`],
     ["Security scan", securityScan.ok ? "green" : "yellow", rel(securityPath), `${securityScan.finding_count} finding(s)`],
     ["Backend LaunchAgent", launchAgent.ok ? "green" : "red", rel(launchAgentPath), `state=${launchAgent.state}; last_exit=${launchAgent.last_exit}; api=${launchAgent.api_version}`],
     ["Buddy no-key installer", noKey.ok ? "green" : "red", rel(noKeyPath), `no_key_mode=${noKey.no_key_mode}; production_green=${noKey.production_green}`],
     ["Codex source handoff", handoff.ok ? "green" : "red", rel(handoffPath), `files=${handoff.file_count}; requires_notarization=${handoff.requires_notarization}; zip=${handoff.zip_path || "missing"}`],
-    ["Prebuilt Mac app", release.customer_ship_ready ? "green" : (release.bundle_ok ? "yellow" : "red"), rel(releasePath), `signed=${release.signed_ok}; notarized=${release.notarized_ok}; blockers=${(release.blockers || []).join("; ")}`],
   ];
   safety.getRange(`A2:D${safetyRows.length + 1}`).values = safetyRows;
   safety.getRange("A1:D1").format = { fill: "#111827", font: { bold: true, color: "#FFFFFF" }, wrapText: true };
@@ -466,9 +465,10 @@ async function main() {
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
     .map((row) => `- ${row.createdAt || "unknown time"}: ${row.campaign} - ${row.title} (${row.views} views)`)
     .join("\n") || "- No active campaign-linked production kits.";
-  const campaignVerdict = health.production_green
+  const readinessIsGreen = readiness.overall === "green";
+  const campaignVerdict = readinessIsGreen
     ? "All CEO gates are green from current evidence. Real campaign rendering is still limited to the nomination/review workflow; posting is gated by provider readiness, warm-up, and final confirmation while payouts and account changes remain blocked."
-    : `Local readiness remains **not green** because these evidence gates are not green: ${nonGreenFeatures || "unknown"}. The source-build handoff zip is a separate Codex/buddy lane and does not require Developer ID or notarization; only a prebuilt Mac app distribution requires signing/notarization. The final buddy book/install wrap-up still waits for the approved review batch.`;
+    : `Local readiness remains **not green** because these evidence gates are not green: ${nonGreenFeatures || "unknown"}. The source-build web handoff is the supported lane now; there is no native Mac app/signing lane in the repo. The final buddy book/install wrap-up still waits for the approved review batch.`;
   const productionRenderDirs = await completeRenderDirs(health.render_root);
   const demoRenderDirs = await completeRenderDirs(health.demo_render_root || "");
   const allRenderDirs = [...productionRenderDirs, ...demoRenderDirs].sort((a, b) => b.mtimeMs - a.mtimeMs);
@@ -532,7 +532,7 @@ async function main() {
         : "The failures are the parts that matter. The hook copy is still template-level, the caption timing is still heuristic or ASR-derived instead of transcript-timed, and the review-safe overlays make the output look like internal QA rather than something that already earned attention in-market.",
     referenceStyleCloser,
     renderProofIsGreen
-      ? "Bottom line: internal-local render validation is green. A Codex source handoff can be green without Apple notarization; only a prebuilt customer Mac app remains gated by Developer ID signing/notarization."
+      ? "Bottom line: internal-local render validation is green when the current evidence rows are green. The supported handoff is a source-build web cockpit, so Apple notarization is not part of readiness anymore."
       : campaignSourceIsGreen
         ? "Bottom line: the renderer pipeline is proving real campaign sourcing and transcript timing, but the output is still not market-ready until the packaging, hook writing, and human campaign-fit approvals clear."
         : "Bottom line: renderer QA is real, renderer taste is not yet proven, and production readiness stays red until campaign clips clear source provenance, transcript timing, campaign rules, and actual market fit.",
@@ -555,7 +555,7 @@ Generated: ${new Date().toISOString()}
 - Internal local status: ${readiness.milestones?.internal_local_ready?.status || "unknown"}
 - Buddy no-key status: ${readiness.milestones?.buddy_no_key_ready?.status || "unknown"}
 - Codex source handoff status: ${readiness.milestones?.codex_handoff_ready?.status || "unknown"}
-- Prebuilt Mac app status: ${readiness.milestones?.customer_ship_ready?.status || "unknown"}
+- Web source-build ship status: ${readiness.milestones?.customer_ship_ready?.status || "unknown"}
 - Campaign status: ${health.campaign_status}
 - Production green: ${health.production_green}
 - Readiness overall: ${readiness.overall}
@@ -564,8 +564,8 @@ ${campaignVerdict}
 
 ## Evidence
 
-- GUI QA manifest: \`${rel(manifestPath)}\` (${guiManifest.page_clicks.length} real sidebar/control clicks, ${guiManifest.screenshots.length} screenshots, ${guiManifest.controls.length} controls)
-- App survived all page clicks: ${guiManifest.app_survived_all_page_clicks}; new crash reports during QA: ${guiManifest.new_crash_reports.length}
+- Web QA manifest: \`${rel(manifestPath)}\` (${guiManifest.route_checks.length} routes, ${guiManifest.screenshots.length} screenshots, ${guiManifest.interaction_checks.length} interactions)
+- Browser errors during QA: ${guiManifest.console_errors.length} console, ${guiManifest.page_errors.length} page
 - QA matrix: \`${rel(workbookPath)}\` (${workbookNote})
 - Scorecard preview: \`${rel(scorecardPreviewPath)}\` (${scorecardPreviewNote})
 - Production review kits: \`${health.production_render_root || health.render_root}\`
@@ -580,7 +580,6 @@ ${campaignVerdict}
 - Backend LaunchAgent check: \`${rel(launchAgentPath)}\` (state=${launchAgent.state}; ok=${launchAgent.ok})
 - No-key installer proof: \`${rel(noKeyPath)}\` (ok=${noKey.ok}; no_key_mode=${noKey.no_key_mode})
 - Codex source handoff proof: \`${rel(handoffPath)}\` (ok=${handoff.ok}; files=${handoff.file_count}; zip=${handoff.zip_path || "missing"})
-- Prebuilt Mac app proof: \`${rel(releasePath)}\` (bundle=${release.bundle_ok}; signed=${release.signed_ok}; notarized=${release.notarized_ok})
 
 ## Milestones
 
@@ -624,7 +623,7 @@ Figma diagram and Figma Slides generation were attempted, but the connected tool
 2. Use Campaigns to refresh the current active streamer-first project set: ${activeCampaignNames.join(", ") || "none"}.
 3. Use Sources only for advanced API checks, watchlist candidates, and future creator campaigns.
 4. Keep demo/local proof kits out of the production Review Kits surface; build campaign review kits only after source provenance and local media are stored.
-5. Review videos in Review Kits; approval enables publish prep only and live posting still requires provider readiness plus final confirmation.
+5. Review videos in Review Kits; approval auto-creates publish prep and schedules a dry-run into the next future \`:14\` slot. Live posting still requires provider readiness plus final confirmation.
 
 ## Hard Stops
 
@@ -642,9 +641,9 @@ Figma diagram and Figma Slides generation were attempted, but the connected tool
 Local-first macOS clipping operations appliance. Index many, render few, publish only after human approval.
 
 ## 2. Evidence Ledger
-- Swift build passed.
+- Web build passed.
 - Backend tests passed.
-- GUI QA covers ${guiManifest.screenshots.length} app screenshots and ${guiManifest.controls.length} controls.
+- Web QA covers ${guiManifest.screenshots.length} screenshots, ${guiManifest.route_checks.length} routes, and ${guiManifest.interaction_checks.length} interactions.
 - Selected-feeder kits render as review-first production candidates only after evidence gates.
 - Twitch/Kick API smoke has live succeeded rows.
 
@@ -655,10 +654,10 @@ See \`${rel(architecturePath)}\`.
 Posting before approved kit, provider readiness, completed warm-up, and final confirmation remains blocked. Payouts, account mutation, gambling clearance, and revenue guarantees remain blocked.
 
 ## 5. Current Readiness
-Codex source handoff is a source/build zip lane and does not require Apple notarization. Prebuilt customer Mac app distribution is separate and remains yellow until Developer ID signing/notarization is proven. Yellow is never ready.
+Codex source handoff is a source/build web lane and does not require Apple notarization. There is no supported native Mac app distribution path in this repo now. Yellow is never ready.
 
 ## 6. Next Proof
-Fix every non-green readiness row, rerun LaunchAgent/no-key/handoff/release/GUI/security checks, regenerate this artifact pack, and keep posting gated while payout/account actions stay blocked.
+Fix every non-green readiness row, rerun LaunchAgent/no-key/handoff/web-QA/security checks, regenerate this artifact pack, and keep posting gated while payout/account actions stay blocked.
 `;
   await writeText(path.join(outDir, "ceo-product-deck.md"), deck);
 
