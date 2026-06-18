@@ -126,6 +126,8 @@ export type JobRecord = {
 };
 
 export type PublishStatus = {
+  supported_platforms?: string[];
+  default_platforms?: string[];
   auto_schedule?: {
     auto_slot_on_approve?: boolean;
     mode?: string;
@@ -142,6 +144,7 @@ export type PublishStatus = {
     live_ready?: boolean;
     blockers?: string[];
     supported_platforms?: string[];
+    platforms?: Record<string, { warmup_complete?: boolean; live_ready?: boolean; blockers?: string[] }>;
   };
   latest_jobs?: PublishJob[];
 };

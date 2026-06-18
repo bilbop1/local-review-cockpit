@@ -10,7 +10,7 @@ The backend blocks or refuses work when an action would mutate an external accou
 
 Blocked by default:
 
-- Social posting unless the review kit is approved, the Upload-Post/provider key is configured outside the repo, account warm-up is complete, live mode is enabled, and the GUI final confirmation is given
+- Social posting unless the review kit is approved, the Upload-Post/provider key is configured outside the repo, selected-platform warm-up is complete, live mode is enabled, and the GUI final confirmation is given
 - Payout submission
 - Account connection
 - Account rebrand
@@ -25,7 +25,7 @@ Allowed locally:
 - Demo renders from local media
 - Demo review-kit approval as `demo_reviewed`
 - Manual publishing prep and Upload-Post dry-run validation only for approved non-demo kits after campaign gate qualification
-- Confirmation-gated Upload-Post live jobs after account warm-up and provider readiness
+- Confirmation-gated Upload-Post live jobs after selected-platform warm-up and provider readiness
 - Rejection with notes
 - Audit logging
 

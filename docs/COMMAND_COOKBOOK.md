@@ -68,7 +68,7 @@ Expected: Twitch, Kick, and Upload-Post credentials are missing; production/live
 ./script/store_credentials_keychain.sh
 ```
 
-Stores the local operator's Twitch/Kick/optional Upload-Post values in macOS Keychain under this app's service. Do not commit, print, or export those values.
+Stores the local operator's Twitch/Kick/optional Upload-Post values in macOS Keychain under this app's service. Do not commit, print, or export those values. Add Upload-Post last; TikTok is the default publish platform, and Instagram/YouTube/Facebook should stay blocked until each account is warmed locally.
 
 ## Hermes Local Checks
 

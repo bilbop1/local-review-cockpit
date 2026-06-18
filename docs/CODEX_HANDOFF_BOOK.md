@@ -276,7 +276,7 @@ Current renderer rules:
 - Output size: 1080x1920.
 - Campaign final renders must include a persistent top summary hook card plus burned-in subtitles.
 - The top hook should create context and tension without spoiling the payoff, matching the TikTok reference direction from `https://www.tiktok.com/t/ZTBDvvEfD/`.
-- Campaign-short renders run a pre-render top-card quality gate. Hooks that are generic, duplicated, raw-title echoes, quote dumps, too short/long, or internally worded block as `blocked_hook_quality` before ffmpeg work starts; Hermes should retry with better hook copy or a better clip candidate instead of relying on Codex to curate cards by hand.
+- Campaign-short renders run a pre-render top-card quality gate. Hooks that are generic, duplicated, raw-title echoes, raw ASR fragments, repeated transcript loops, quote dumps, too short/long, or internally worded block as `blocked_hook_quality` before ffmpeg work starts; Hermes should retry with better hook copy or a better clip candidate instead of relying on Codex to curate cards by hand. If an existing unreviewed batch has weak cards, use `script/repair_review_top_cards.py` so only `needs_review` kits are rerendered.
 - The top hook card should visually match the reference: author the white rounded rectangle in 720x1280 source-design space, then upscale it into the 1080x1920 render with the video. Do not draw the hook as crisp native-1080 text. In final output the white card sits at x=99-980, y=336-493 and stays centered. Shorter hooks shrink to the visible text plus reference padding instead of carrying dead white space. In source space, use bundled TikTok Sans Bold at 34px, near-black text at RGB 22/22/22, 40px emoji raised 5px above the text visual top, white-card y=223, visual text y=237, 21px text inset, a 548px source-space text line cap, a 10px two-line gap, visual text width plus roughly 46px card padding, a 587px source-space max card width, a 330px source-space minimum card width, and a 14px card radius. After upscale, apply the top-anchored 5.2% visible-card vertical stretch; do not apply the old half-resolution bicubic softening pass, because it makes the glyph edges lighter and mushier than the TikTok reference. This lands around 51px text, 60px emoji, text y=358, a 15px gap, and a white-card fill whose decoded bbox matches the reference instead of being padded by shadow pixels. The 548px line cap is required so live hooks do not crowd the right card edge. TikTok Sans SemiBold, Avenir Next Demi Bold, and SFNS Semibold are fallbacks for machines without the bundled bold font; Arial Bold is emergency fallback only. Do not regress to native-1080 Arial, the old small pill-style TikTok ExtraBold overlay, the old 48px fallback, tiny pill cards, dead-space cards, over-softened glyph edges, compressed card/text height, shadow-measured green checks, or loose vertical padding inside the white card.
 - The top hook copy should read like a native human setup card: streamer/person + situation + tension. Avoid stiff report language like "messy detail," "story somehow turned," "proof," "review," or "selected feeder."
 - Top-card parity proof must come from `script/audit_top_card_reference.py` plus `script/audit_live_top_cards.py --refresh`; do not rely on sidecar text or regenerated overlays without decoded `review.mp4` frames.
@@ -324,7 +324,7 @@ For each kit:
 6. Approve only if it is worth manual prep.
 7. Reject with notes if anything feels off.
 
-Approval does not publish. It marks the kit as approved for preparation; live Upload-Post jobs still require provider readiness, account warm-up completion, and a final GUI confirmation.
+Approval does not publish. It marks the kit as approved for preparation, creates the publish package, and assigns the next future local `:14` dry-run validation slot. Live Upload-Post jobs still require provider readiness, platform warm-up completion, live mode, and a final GUI confirmation.
 
 ## Upload-Post Autopost Readiness
 
@@ -332,12 +332,13 @@ Upload-Post is the first live posting provider. This repo ships the dry-run/live
 
 Incoming operators should:
 
-1. Finish their own platform account warm-up.
+1. Finish their own platform account warm-up. TikTok is the default live platform; Instagram, YouTube, and Facebook remain blocked until separately warmed.
 2. Add their Upload-Post API key through macOS Keychain account `uploadpost.api_key` or private runtime env `UPLOAD_POST_API_KEY`.
 3. Set the Upload-Post user/profile in Settings.
 4. Keep provider mode as `Dry Run` until dry-run jobs pass on approved kits.
-5. Switch Settings to `Live` only when account warm-up is complete.
-6. Confirm each live post from the Review Kits publish panel.
+5. Mark only the warmed platform as ready in Settings.
+6. Switch Settings to `Live` only when account warm-up is complete.
+7. Confirm each live post from the Review Kits publish panel.
 
 Discord and Hermes may report publish job status, but SQLite remains the source of truth.
 

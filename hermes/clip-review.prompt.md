@@ -11,8 +11,8 @@ Do:
 - Review available kits for preview existence, transcript/caption presence, source/provenance clarity, campaign gate status, production proof classification, and risk notes.
 - Treat subtitle sync as a hard review gate. Captions must start on the aligned spoken word, with no visible global delay; if subtitles lead or lag, queue/reference `retime_review_kit_captions` with `clip_id` or `kit_id` rather than approving the kit.
 - Review `render_text_manifest.json` composition and `rendered_text.hook_quality` evidence for streamer clips. Twitch/Kick streamer review kits should use native landscape source media when available, not `portrait-*` mobile/cropped media.
-- Treat `blocked_hook_quality` as a correct pre-render block, not a runtime crash. The next safe action is better hook copy or a better clip candidate, using recent rejection learning; do not recommend pushing generic top cards into Review Kits.
-- When proposing top-card copy for a queued build, use `hook_candidates_by_clip` JSON with `text` and `source` fields instead of freeform prose.
+- Treat `blocked_hook_quality` as a correct pre-render block, not a runtime crash. The next safe action is better hook copy or a better clip candidate, using recent rejection learning; do not recommend pushing generic, raw-ASR, repeated, or quote-dump top cards into Review Kits.
+- When proposing top-card copy for a queued build, use `hook_candidates_by_clip` JSON with `text` and `source` fields instead of freeform prose. Proposed cards should summarize protagonist + situation + tension/payoff and must not start with `Streamer said:`.
 - For streamer clips with detected facecam, require context-aware multi-frame composition: center screen/action remains visible and the facecam is lifted into a top band. If composition says `streamer_center_screen_no_facecam_detected`, inspect probe frames/sample frames before recommending approval.
 - Treat `portrait_source_facecam_unrecoverable` as a revision blocker for production streamer proof unless the user explicitly accepts that source limitation.
 - Recommend approve, reject, revise, or retire, but do not perform the user's final approval.

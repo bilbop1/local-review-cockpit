@@ -20,6 +20,8 @@ The low-quota incoming path is:
 
 That command verifies the source-build clone without requiring secrets. Missing Twitch/Kick/Upload-Post credentials are expected in no-key mode.
 
+For a guided new-operator install, hand Codex the repo URL plus [docs/codex-first-time-setup.md](docs/codex-first-time-setup.md). The setup flow verifies no-key mode first, configures Hermes/MiniMax locally, then asks for Upload-Post last after the operator confirms account warm-up.
+
 ## What Is In The Repo
 
 - A React/Vite browser cockpit in `web/`, served locally at `http://127.0.0.1:8765/app`.
@@ -88,6 +90,7 @@ The supported UI is the browser cockpit. Native Swift/macOS app code has been re
 ## Safety Model
 
 - No posting before approved review kit, provider readiness, completed account warm-up, and final GUI confirmation.
+- Upload-Post defaults to TikTok only; Instagram, YouTube, and Facebook stay blocked until each account is warmed and explicitly enabled in local settings.
 - No payout submission.
 - No account connection or account rebrand.
 - No real campaign render before the campaign research gate passes.
@@ -122,6 +125,7 @@ Canonical agent docs:
 - [AI agent operating contract](docs/AI_AGENT_OPERATING_CONTRACT.md)
 - [Command cookbook](docs/COMMAND_COOKBOOK.md)
 - [Hermes job contract](docs/HERMES_JOB_CONTRACT.md)
+- [Codex first-time setup](docs/codex-first-time-setup.md)
 - [Campaign selection standard](docs/campaign-selection.md)
 - [Caption style standard](docs/caption-style.md)
 - [Streamer composition standard](docs/streamer-composition.md)

@@ -108,9 +108,9 @@ Build campaign reviews:
 
 Hermes build intents must run caption alignment before reporting success. The dispatcher calls `script/ensemble_retime_review_kits.py` for each created clip; if alignment blocks, the Hermes job blocks instead of handing the operator a mistimed review video.
 
-Hermes build intents must also respect the deterministic top-card quality gate before render. Campaign-short builders write `blocked_hook_quality` when every proposed hook is generic, duplicated, a raw-title echo, a quote dump, too short/long, or contains internal language. Treat that as a normal retry/selection blocker: pick a better clip or propose better hook copy, then queue a fresh build. Do not force a bad hook into Review Kits.
+Hermes build intents must also respect the deterministic top-card quality gate before render. Campaign-short builders write `blocked_hook_quality` when every proposed hook is generic, duplicated, a raw-title echo, a raw ASR fragment, a repeated transcript loop, a quote dump, too short/long, or contains internal language. Treat that as a normal retry/selection blocker: pick a better clip or propose better hook copy, then queue a fresh build. Do not force a bad hook into Review Kits.
 
-Hermes/MiniMax may pass hook proposals through the job payload as `hook_candidates_by_clip`, keyed by clip ID. Each candidate is a JSON object with at least `text` and `source`; the builder evaluates candidates in order and appends the deterministic local fallback after them.
+Hermes/MiniMax may pass hook proposals through the job payload as `hook_candidates_by_clip`, keyed by clip ID. Each candidate is a JSON object with at least `text` and `source`; the builder evaluates candidates in order and appends the deterministic local fallback after them. Good hook candidates should be viewer-facing summaries shaped like protagonist + situation + tension/payoff. Do not submit captions that start with `Streamer said:`, copy the clip title, or paste the first words of the transcript.
 
 ```json
 {
@@ -128,6 +128,14 @@ Hermes/MiniMax may pass hook proposals through the job payload as `hook_candidat
   }
 }
 ```
+
+Repair existing unreviewed top cards only:
+
+```bash
+PYTHONPATH=backend backend/.venv/bin/python script/repair_review_top_cards.py --apply --quota-recovery
+```
+
+Use `--only-failing` for a narrower pass. The repair command only targets non-demo `needs_review` campaign kits; already-approved and rejected kits are not rerendered.
 
 Scheduled fresh review build:
 

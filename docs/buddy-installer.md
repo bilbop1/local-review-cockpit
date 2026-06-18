@@ -10,6 +10,8 @@ If you are an AI agent, start with `AGENT_START_HERE.md` and run:
 
 Use `script/setup_buddy_no_key.sh` to install and verify the same local system shape without transferring secrets.
 
+For a guided Codex install prompt and credential order, use `docs/codex-first-time-setup.md`.
+
 Clone the public GitHub source repo and build locally:
 
 ```text
@@ -35,7 +37,7 @@ It intentionally does not copy:
 - downloaded source media
 - rendered review kits
 
-Real campaign ingestion remains blocked until the local operator signs into their own services and provides their own credentials. Upload-Post live posting remains locked until the local operator provides their own key, completes account warm-up, switches live mode on, and confirms each post. The demo review-kit path works from local/sample media only.
+Real campaign ingestion remains blocked until the local operator signs into their own services and provides their own credentials. Upload-Post live posting remains locked until the local operator provides their own key, completes account warm-up for the selected platform, switches live mode on, and confirms each post. TikTok is the default publish platform; Instagram, YouTube, and Facebook stay blocked until each account has its own warm-up evidence. The demo review-kit path works from local/sample media only.
 
 Normal app actions queue Hermes job intents. The local operator must configure their own Hermes profile/provider locally; this repo never transfers Hermes auth, model provider auth, Discord gateway credentials, or API keys.
 

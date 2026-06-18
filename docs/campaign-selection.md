@@ -67,7 +67,7 @@ For active streamer campaigns, index fresh supply in this exact order:
 
 Do not use the old 35-day top-recent sweep as normal production proof. It is an emergency/manual research fallback only. Rank candidates by views, freshness, campaign fit, hook strength, source quality, duplicate avoidance, and recent rejection-learning penalties.
 
-Top-card copy is gated before render. A campaign kit must use a hook shaped like streamer/person + situation + tension, and the deterministic gate blocks generic chat filler, quote dumps, raw-title echoes, duplicates from the recent campaign queue, internal labels, and hooks that are too short or too long. `blocked_hook_quality` means Hermes should pick a better candidate or propose better hook copy; it is not permission to hand-curate the same bad card into Review Kits.
+Top-card copy is gated before render. A campaign kit must use a hook shaped like streamer/person + situation + tension, and the deterministic gate blocks generic chat filler, quote dumps, raw ASR fragments, repeated transcript loops, raw-title echoes, duplicates from the recent campaign queue, internal labels, and hooks that are too short or too long. `blocked_hook_quality` means Hermes should pick a better candidate or propose better hook copy; it is not permission to hand-curate the same bad card into Review Kits. For an existing unreviewed batch with weak cards, rerender only `needs_review` kits with `script/repair_review_top_cards.py`; approved and rejected kits are learning/output state and should not be rewritten by the repair pass.
 
 ## Daily Review Factory
 

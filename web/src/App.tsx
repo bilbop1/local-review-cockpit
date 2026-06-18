@@ -352,6 +352,10 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
   }, [data.kits, filter, campaign, query]);
 
   const selected = useMemo(() => filtered.find((kit) => kit.id === selectedId) || filtered[0] || data.kits[0], [data.kits, filtered, selectedId]);
+  const publishPlatforms = useMemo(() => {
+    const defaults = data.publish?.default_platforms || [];
+    return defaults.length ? defaults : ["tiktok"];
+  }, [data.publish?.default_platforms]);
 
   useEffect(() => {
     if (selected?.id) {
@@ -406,7 +410,7 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
     setError("");
     try {
       await apiPost(`/api/review-kits/${selected.id}/publish-prep`, {
-        platforms: ["tiktok", "instagram", "youtube"],
+        platforms: publishPlatforms,
         title: selected.title || "",
         caption: selected.title || ""
       });
@@ -427,7 +431,7 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
         mode: "dry_run",
         provider: "uploadpost",
         kit_id: selected.id,
-        platforms: ["tiktok", "instagram", "youtube"],
+        platforms: publishPlatforms,
         requested_by: "web-gui"
       });
       await refresh();
@@ -761,6 +765,7 @@ function Readiness({ data }: { data: AppData }) {
 function SettingsPage({ data, refresh }: { data: AppData; refresh: () => Promise<void> }) {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
+  const uploadPlatforms = data.publish?.provider?.platforms || {};
   async function updatePublish(body: Record<string, unknown>) {
     setBusy("publish");
     setMessage("");
@@ -768,6 +773,19 @@ function SettingsPage({ data, refresh }: { data: AppData; refresh: () => Promise
       await apiPost("/api/publish/settings", body);
       await refresh();
       setMessage("Settings updated.");
+    } catch (exc) {
+      setMessage(exc instanceof Error ? exc.message : String(exc));
+    } finally {
+      setBusy("");
+    }
+  }
+  async function rescheduleApprovedSlots() {
+    setBusy("reschedule");
+    setMessage("");
+    try {
+      const result = await apiPost<Record<string, unknown>>("/api/publish/schedule/rebalance", {});
+      await refresh();
+      setMessage(`Rescheduled ${String(result.rescheduled_count ?? 0)} approved publish slot(s).`);
     } catch (exc) {
       setMessage(exc instanceof Error ? exc.message : String(exc));
     } finally {
@@ -847,16 +865,27 @@ function SettingsPage({ data, refresh }: { data: AppData; refresh: () => Promise
           <Pill tone={data.publish?.provider?.live_ready ? "green" : "yellow"} label={data.publish?.provider?.live_ready ? "live ready" : "locked"} />
         </div>
         <div className="button-row">
-          <button onClick={() => updatePublish({ warmup_complete: true })} disabled={!!busy}>Mark Warm-up Complete</button>
-          <button onClick={() => updatePublish({ warmup_complete: false })} disabled={!!busy}>Lock Warm-up</button>
+          <button onClick={() => updatePublish({ platform_warmup: { tiktok: true } })} disabled={!!busy}>TikTok Warm</button>
+          <button onClick={() => updatePublish({ platform_warmup: { tiktok: false } })} disabled={!!busy}>TikTok Locked</button>
           <button onClick={() => updatePublish({ mode: "dry_run" })} disabled={!!busy}>Dry-Run Mode</button>
           <button onClick={() => updatePublish({ mode: "live" })} disabled={!!busy}>Live Mode Gate</button>
+          <button onClick={rescheduleApprovedSlots} disabled={!!busy}><RefreshCw size={16} /> Reschedule Approved</button>
+        </div>
+        <div className="health-list">
+          {Object.entries(uploadPlatforms).map(([platform, status]) => (
+            <div key={platform}>
+              <Pill tone={status.live_ready ? "green" : status.warmup_complete ? "yellow" : "grey"} label={status.live_ready ? "live ready" : status.warmup_complete ? "warm" : "blocked"} />
+              <strong>{platform}</strong>
+              <span>{(status.blockers || [])[0] || "Ready for selected Upload-Post mode."}</span>
+            </div>
+          ))}
         </div>
         <div className="publish-summary">
           <Pill tone="yellow" label="auto-slot" />
           <span>{data.publish?.auto_schedule?.slots_per_day || 8}/day</span>
           <span>minute :{String(data.publish?.auto_schedule?.slot_minute ?? 14).padStart(2, "0")}</span>
           <span>{data.publish?.auto_schedule?.timezone || "local time"}</span>
+          <span>default {(data.publish?.default_platforms || ["tiktok"]).join(", ")}</span>
         </div>
         <p>Keys stay outside the repo. Use Keychain/private runtime config only.</p>
       </section>
