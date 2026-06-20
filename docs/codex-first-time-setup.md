@@ -38,16 +38,17 @@ cd local-review-cockpit
 ./script/store_credentials_keychain.sh
 ```
 
-5. Add Upload-Post last. TikTok is the default publish platform. Leave Instagram, YouTube, and Facebook blocked until those accounts have their own warm-up evidence.
+5. Add Upload-Post last. TikTok is the default publish platform. Set the exact Upload-Post profile name for this local operator, then leave Instagram, YouTube, and Facebook blocked until those accounts have their own warm-up evidence.
 
 ## Upload-Post Rules
 
 - The repo never includes Upload-Post keys or connected account sessions.
 - `UPLOAD_POST_API_KEY` is allowed only as a private runtime environment variable.
 - The macOS Keychain account is `uploadpost.api_key`.
+- The Upload-Post profile is a local app setting. Publish jobs do not choose or override it; every dry-run/live request uses the single configured profile for that local install.
 - The default live-ready platform is TikTok only.
 - Approving a kit schedules a dry-run publish validation into the next local `:14` slot.
-- Live upload still requires provider key, platform warm-up, live mode, and final GUI confirmation.
+- Live upload still requires provider key, configured Upload-Post profile, platform warm-up, live mode, and final GUI confirmation.
 
 ## Local Checks
 
@@ -66,5 +67,6 @@ Expected before credentials:
 Expected after TikTok Upload-Post readiness:
 
 - `/api/publish/status` shows `default_platforms=["tiktok"]`.
+- `/api/publish/status` shows the operator's configured Upload-Post profile.
 - TikTok can become live-ready.
 - Instagram, YouTube, and Facebook remain blocked unless the operator warms and enables them locally.

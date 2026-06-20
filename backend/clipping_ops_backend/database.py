@@ -3943,6 +3943,7 @@ def _keychain_secret_present(account: str) -> bool:
 
 def uploadpost_publish_readiness_hint() -> Dict[str, Any]:
     key_present = _keychain_secret_present("uploadpost.api_key")
+    profile = _system_setting_value("publish.uploadpost.user", "").strip()
     legacy_warmup = _system_setting_value("publish.uploadpost.warmup_complete", "false").strip().lower() in {"1", "true", "yes", "y"} or os.environ.get(
         "CLIPPING_OPS_UPLOADPOST_WARMUP_COMPLETE", ""
     ).strip().lower() in {"1", "true", "yes", "y"}
@@ -3952,17 +3953,21 @@ def uploadpost_publish_readiness_hint() -> Dict[str, Any]:
     if mode not in {"dry_run", "live"}:
         mode = "dry_run"
     blockers: List[str] = []
+    if not profile:
+        blockers.append("Upload-Post profile is not configured")
     if not key_present:
         blockers.append("Upload-Post API key missing")
     if not warmup:
         blockers.append("TikTok account warm-up incomplete")
     if mode != "live":
         blockers.append("provider mode is dry-run")
-    live_ready = key_present and warmup and mode == "live"
+    live_ready = bool(profile) and key_present and warmup and mode == "live"
     return {
         "live_ready": live_ready,
         "key_present": key_present,
         "warmup_complete": warmup,
+        "profile_configured": bool(profile),
+        "user": profile or "local-operator",
         "default_platforms": ["tiktok"],
         "platforms": {
             "tiktok": {
@@ -3973,7 +3978,7 @@ def uploadpost_publish_readiness_hint() -> Dict[str, Any]:
         },
         "mode": mode,
         "blockers": blockers,
-        "detail": f"provider=uploadpost; default=tiktok; key={'configured' if key_present else 'missing'}; tiktok_warmup={warmup}; mode={mode}",
+        "detail": f"provider=uploadpost; default=tiktok; profile={'configured' if profile else 'missing'}; key={'configured' if key_present else 'missing'}; tiktok_warmup={warmup}; mode={mode}",
     }
 
 

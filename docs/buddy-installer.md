@@ -37,7 +37,7 @@ It intentionally does not copy:
 - downloaded source media
 - rendered review kits
 
-Real campaign ingestion remains blocked until the local operator signs into their own services and provides their own credentials. Upload-Post live posting remains locked until the local operator provides their own key, completes account warm-up for the selected platform, switches live mode on, and confirms each post. TikTok is the default publish platform; Instagram, YouTube, and Facebook stay blocked until each account has its own warm-up evidence. The demo review-kit path works from local/sample media only.
+Real campaign ingestion remains blocked until the local operator signs into their own services and provides their own credentials. Upload-Post live posting remains locked until the local operator provides their own key, sets the exact local Upload-Post profile, completes account warm-up for the selected platform, switches live mode on, and confirms each post. TikTok is the default publish platform; Instagram, YouTube, and Facebook stay blocked until each account has its own warm-up evidence. The demo review-kit path works from local/sample media only.
 
 Normal app actions queue Hermes job intents. The local operator must configure their own Hermes profile/provider locally; this repo never transfers Hermes auth, model provider auth, Discord gateway credentials, or API keys.
 

@@ -141,6 +141,8 @@ export type PublishStatus = {
     mode?: string;
     api_key?: string;
     warmup_complete?: boolean;
+    user?: string;
+    profile_configured?: boolean;
     live_ready?: boolean;
     blockers?: string[];
     supported_platforms?: string[];

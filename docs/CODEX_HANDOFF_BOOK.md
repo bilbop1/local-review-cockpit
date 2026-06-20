@@ -334,7 +334,7 @@ Incoming operators should:
 
 1. Finish their own platform account warm-up. TikTok is the default live platform; Instagram, YouTube, and Facebook remain blocked until separately warmed.
 2. Add their Upload-Post API key through macOS Keychain account `uploadpost.api_key` or private runtime env `UPLOAD_POST_API_KEY`.
-3. Set the Upload-Post user/profile in Settings.
+3. Set the exact Upload-Post user/profile in Settings. This local setting is the profile lock: publish jobs do not choose, inherit, or override a different Upload-Post profile.
 4. Keep provider mode as `Dry Run` until dry-run jobs pass on approved kits.
 5. Mark only the warmed platform as ready in Settings.
 6. Switch Settings to `Live` only when account warm-up is complete.

@@ -76,12 +76,12 @@ def uploadpost_api_key() -> str:
     )
 
 
+def configured_uploadpost_user() -> str:
+    return _setting("publish.uploadpost.user", "").strip()
+
+
 def uploadpost_user() -> str:
-    return (
-        os.environ.get("UPLOAD_POST_USER", "").strip()
-        or _setting("publish.uploadpost.user", "local-operator").strip()
-        or "local-operator"
-    )
+    return configured_uploadpost_user() or "local-operator"
 
 
 def uploadpost_mode() -> str:
@@ -120,9 +120,12 @@ def uploadpost_warmup_complete() -> bool:
 
 def uploadpost_platform_statuses(mode: str, key_present: bool) -> Dict[str, Dict[str, Any]]:
     statuses: Dict[str, Dict[str, Any]] = {}
+    profile_configured = bool(configured_uploadpost_user())
     for platform in SUPPORTED_PLATFORMS:
         warmup = uploadpost_platform_warmup_complete(platform)
         blockers: List[str] = []
+        if not profile_configured:
+            blockers.append("Upload-Post profile is not configured.")
         if not key_present:
             blockers.append("Upload-Post API key missing.")
         if not warmup:
@@ -131,7 +134,7 @@ def uploadpost_platform_statuses(mode: str, key_present: bool) -> Dict[str, Dict
             blockers.append("Provider mode is dry-run.")
         statuses[platform] = {
             "warmup_complete": warmup,
-            "live_ready": key_present and warmup and mode == "live",
+            "live_ready": profile_configured and key_present and warmup and mode == "live",
             "blockers": blockers,
         }
     return statuses
@@ -141,6 +144,8 @@ def uploadpost_provider_blockers(platforms: Iterable[Any] = DEFAULT_PUBLISH_PLAT
     key_present = bool(uploadpost_api_key())
     mode = uploadpost_mode()
     blockers: List[str] = []
+    if not configured_uploadpost_user():
+        blockers.append("Upload-Post profile is not configured.")
     if not key_present:
         blockers.append("Upload-Post API key missing.")
     for platform in normalize_platforms(platforms):
@@ -198,6 +203,7 @@ def publish_status() -> Dict[str, Any]:
             "api_key": "configured" if key_present else "missing",
             "warmup_complete": uploadpost_warmup_complete(),
             "user": uploadpost_user(),
+            "profile_configured": bool(configured_uploadpost_user()),
             "live_ready": not blockers,
             "blockers": blockers,
             "platforms": platform_statuses,

@@ -27,6 +27,8 @@ The backend job ledger is the normal interface between GUI intent, Hermes orches
 | `prepare_publish_package` | Prepare an approved kit for posting | `{"kit_id":"kit_x"}` |
 | `publish_dry_run` | Validate publish payload without posting | `{"publish_job_id":"pubjob_x"}` |
 | `publish_live` | Live Upload-Post job after final confirmation | `{"publish_job_id":"pubjob_x"}` |
+
+Upload-Post jobs never select a provider profile from job payload. The backend always sends the single configured local Upload-Post user/profile from Settings, so each operator's clone is pinned to their own profile.
 | `publish_schedule_tick` | Promote due scheduled dry-runs into Hermes publish jobs | `{}` |
 | `publish_status_sweep` | Refresh/report publish status | `{}` |
 

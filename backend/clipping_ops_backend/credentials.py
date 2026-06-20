@@ -114,8 +114,7 @@ def write_secret(account: str, value: str) -> None:
     if no_key_mode() and (account.startswith("twitch.") or account.startswith("kick.")):
         raise RuntimeError("no-key mode blocks credential writes")
     proc = subprocess.run(
-        ["security", "add-generic-password", "-U", "-a", account, "-s", SERVICE, "-w"],
-        input=f"{value}\n{value}\n",
+        ["security", "add-generic-password", "-U", "-a", account, "-s", SERVICE, "-w", value],
         text=True,
         capture_output=True,
         timeout=10,

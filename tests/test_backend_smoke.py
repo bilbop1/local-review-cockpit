@@ -26,6 +26,7 @@ from clipping_ops_backend.caption_style import (
     timed_caption_groups,
 )
 from clipping_ops_backend import database as db
+from clipping_ops_backend import credentials
 from clipping_ops_backend import publishing
 from clipping_ops_backend.server import clean_reset, export_diagnostics, health, summary, validate_kit_artifacts, workspace_profile
 from clipping_ops_backend.credentials import all_status
@@ -441,11 +442,13 @@ class BackendSmokeTests(unittest.TestCase):
         package = publishing.create_publish_package(kit_id)
         job = publishing.create_publish_job({"package_id": package["id"], "mode": "live", "platforms": ["tiktok"]})
         self.assertEqual(job["status"], "awaiting_confirmation")
-        with self.assertRaises(publishing.PublishError) as blocked:
-            publishing.confirm_live_publish(job["id"])
+        with mock.patch("clipping_ops_backend.publishing.uploadpost_api_key", return_value=""):
+            with self.assertRaises(publishing.PublishError) as blocked:
+                publishing.confirm_live_publish(job["id"])
         self.assertIn("Upload-Post API key missing", blocked.exception.detail)
 
-        result = publishing.execute_publish_job(job["id"])
+        with mock.patch("clipping_ops_backend.publishing.uploadpost_api_key", return_value=""):
+            result = publishing.execute_publish_job(job["id"])
         self.assertEqual(result["status"], "blocked")
         self.assertIn("Final live-post confirmation is missing", result["blocker"])
 
@@ -463,6 +466,7 @@ class BackendSmokeTests(unittest.TestCase):
             status = publishing.set_publish_settings(
                 {
                     "mode": "live",
+                    "user": "JasonMyWeen",
                     "platform_warmup": {
                         "tiktok": True,
                         "instagram": False,
@@ -472,6 +476,8 @@ class BackendSmokeTests(unittest.TestCase):
                 }
             )
             self.assertEqual(status["default_platforms"], ["tiktok"])
+            self.assertEqual(status["provider"]["user"], "JasonMyWeen")
+            self.assertTrue(status["provider"]["profile_configured"])
             self.assertTrue(status["provider"]["platforms"]["tiktok"]["live_ready"])
             self.assertFalse(status["provider"]["platforms"]["instagram"]["warmup_complete"])
             self.assertFalse(status["provider"]["platforms"]["youtube"]["warmup_complete"])
@@ -484,6 +490,37 @@ class BackendSmokeTests(unittest.TestCase):
             with self.assertRaises(publishing.PublishError) as blocked:
                 publishing.confirm_live_publish(instagram_job["id"])
             self.assertIn("Instagram account warm-up is not marked complete", blocked.exception.detail)
+
+    def test_uploadpost_profile_is_locked_to_local_setting_not_env_or_job_payload(self):
+        kit_id = self.make_publishable_kit()
+        with mock.patch.dict(os.environ, {"UPLOAD_POST_USER": "WrongProfile", "UPLOAD_POST_API_KEY": "secret_test_key"}, clear=False):
+            publishing.set_publish_settings({"user": "JasonMyWeen", "mode": "dry_run", "platform_warmup": {"tiktok": True}})
+            package = publishing.create_publish_package(kit_id)
+            job = publishing.create_publish_job(
+                {
+                    "package_id": package["id"],
+                    "mode": "dry_run",
+                    "platforms": ["tiktok"],
+                    "user": "AlsoWrong",
+                }
+            )
+
+            result = publishing.execute_publish_job(job["id"])
+
+        summary = result["result"]["request_summary"]
+        self.assertEqual(summary["fields"]["user"], "JasonMyWeen")
+        self.assertNotIn("WrongProfile", json.dumps(summary))
+        self.assertNotIn("AlsoWrong", json.dumps(summary))
+
+    def test_keychain_write_secret_is_noninteractive(self):
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with mock.patch("clipping_ops_backend.credentials.subprocess.run", return_value=completed) as run:
+            credentials.write_secret("uploadpost.api_key", "secret_value")
+
+        args = run.call_args.args[0]
+        kwargs = run.call_args.kwargs
+        self.assertEqual(args[-2:], ["-w", "secret_value"])
+        self.assertNotIn("input", kwargs)
 
     def test_caption_style_uses_tiktok_sans_and_two_word_beats(self):
         manifest = caption_style_manifest()

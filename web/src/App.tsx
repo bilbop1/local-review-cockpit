@@ -886,6 +886,7 @@ function SettingsPage({ data, refresh }: { data: AppData; refresh: () => Promise
           <span>minute :{String(data.publish?.auto_schedule?.slot_minute ?? 14).padStart(2, "0")}</span>
           <span>{data.publish?.auto_schedule?.timezone || "local time"}</span>
           <span>default {(data.publish?.default_platforms || ["tiktok"]).join(", ")}</span>
+          <span>profile {data.publish?.provider?.user || "not configured"}</span>
         </div>
         <p>Keys stay outside the repo. Use Keychain/private runtime config only.</p>
       </section>
