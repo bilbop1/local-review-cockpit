@@ -29,7 +29,7 @@ The backend job ledger is the normal interface between GUI intent, Hermes orches
 | `publish_live` | Live Upload-Post job after final confirmation | `{"publish_job_id":"pubjob_x"}` |
 
 Upload-Post jobs never select a provider profile from job payload. The backend always sends the single configured local Upload-Post user/profile from Settings, so each operator's clone is pinned to their own profile.
-| `publish_schedule_tick` | Promote due scheduled dry-runs into Hermes publish jobs | `{}` |
+| `publish_schedule_tick` | Promote due scheduled publish jobs into Hermes work | `{}` |
 | `publish_status_sweep` | Refresh/report publish status | `{}` |
 
 Unsupported intents must be blocked, not guessed.
@@ -169,9 +169,9 @@ Publish schedule tick:
 {"intent":"publish_schedule_tick","requested_by":"publish-scheduler","payload":{}}
 ```
 
-Approving a non-demo review kit through the GUI creates or updates its publish package, then schedules one dry-run publish job into the next future local `:14` slot. The default cadence is eight slots per day: `00:14`, `03:14`, `06:14`, `09:14`, `12:14`, `15:14`, `18:14`, and `21:14`. Scheduled dry-runs stay in `publish_jobs` as `scheduled` until `/api/publish/schedule/tick` promotes due jobs into `publish_dry_run` Hermes work.
+Approving a non-demo review kit through the GUI creates or updates its publish package, then schedules one publish job into the next future local `:14` slot. The default cadence is eight slots per day: `00:14`, `03:14`, `06:14`, `09:14`, `12:14`, `15:14`, `18:14`, and `21:14`. Fresh installs keep auto-post off, so scheduled jobs are package checks. Once the local operator enables auto-post and the selected platform is ready, scheduled approved jobs are armed as live Upload-Post work and `/api/publish/schedule/tick` promotes due jobs into `publish_live`.
 
-Live publish is allowed only after the backend publish job exists, the kit is approved, provider key is configured locally, warm-up is complete, live mode is enabled, and the GUI final confirmation has created the `publish_live` job.
+Live publish is allowed only after the backend publish job exists, the kit is approved, the exact local Upload-Post profile is configured, provider key is configured locally, warm-up is complete, live mode is enabled, and local auto-post has armed the scheduled job or the GUI final confirmation has created the `publish_live` job.
 
 ## Read-Only Endpoints
 

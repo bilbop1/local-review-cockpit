@@ -67,7 +67,7 @@ if not providers.get("twitch", {}).get("ok"):
 if not providers.get("kick", {}).get("ok"):
     missing.append("Add Kick credentials only if this operator needs Kick monitoring; Kick is not production source proof by default.")
 if publish.get("provider", {}).get("api_key") == "missing":
-    missing.append("Add Upload-Post key later, after TikTok account warm-up, for dry-run/live publish testing.")
+    missing.append("Add Upload-Post key later, after TikTok account warm-up, for package checks and live publish testing.")
 if not agents.get("hermes_available"):
     missing.append("Install/configure local Hermes before expecting Hermes-native orchestration.")
 

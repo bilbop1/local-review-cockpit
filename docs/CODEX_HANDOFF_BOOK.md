@@ -119,7 +119,7 @@ cd local-review-cockpit
 ./script/build_and_run.sh
 ```
 
-No-key mode should show Twitch/Kick/Upload-Post credentials as missing. That is correct. The local web cockpit should open at `http://127.0.0.1:8765/app`; production campaign and publish jobs must block or dry-run until the local operator supplies their own credentials, source access, account warm-up completion, and final confirmations.
+No-key mode should show Twitch/Kick/Upload-Post credentials as missing. That is correct. The local web cockpit should open at `http://127.0.0.1:8765/app`; production campaign and publish jobs must block or stay in package-check mode until the local operator supplies their own credentials, source access, account warm-up completion, and posting confirmation/auto-post settings.
 
 ## Credential Setup Expectations
 
@@ -324,18 +324,18 @@ For each kit:
 6. Approve only if it is worth manual prep.
 7. Reject with notes if anything feels off.
 
-Approval does not publish. It marks the kit as approved for preparation, creates the publish package, and assigns the next future local `:14` dry-run validation slot. Live Upload-Post jobs still require provider readiness, platform warm-up completion, live mode, and a final GUI confirmation.
+Approval marks the kit as ready, creates the publish package, and assigns the next future local `:14` slot. Fresh installs keep auto-post off. Once the local operator has configured their exact Upload-Post profile, added their key, warmed the selected platform, set live mode, and enabled auto-post, approved scheduled jobs become live Upload-Post jobs at their slot time.
 
 ## Upload-Post Autopost Readiness
 
-Upload-Post is the first live posting provider. This repo ships the dry-run/live provider interface, but it does not ship API keys or connected social accounts.
+Upload-Post is the first live posting provider. This repo ships the package-check/live provider interface, but it does not ship API keys or connected social accounts.
 
 Incoming operators should:
 
 1. Finish their own platform account warm-up. TikTok is the default live platform; Instagram, YouTube, and Facebook remain blocked until separately warmed.
 2. Add their Upload-Post API key through macOS Keychain account `uploadpost.api_key` or private runtime env `UPLOAD_POST_API_KEY`.
 3. Set the exact Upload-Post user/profile in Settings. This local setting is the profile lock: publish jobs do not choose, inherit, or override a different Upload-Post profile.
-4. Keep provider mode as `Dry Run` until dry-run jobs pass on approved kits.
+4. Keep auto-post off until package checks pass on approved kits.
 5. Mark only the warmed platform as ready in Settings.
 6. Switch Settings to `Live` only when account warm-up is complete.
 7. Confirm each live post from the Review Kits publish panel.

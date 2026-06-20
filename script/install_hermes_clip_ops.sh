@@ -151,7 +151,7 @@ create_job "clip-research campaign gate sweep" "every 12h" "$ROOT_DIR/hermes/cli
 create_job "clip-review kit risk sweep" "every 6h" "$ROOT_DIR/hermes/clip-review.prompt.md"
 create_job "clip-review learning summary" "every 24h" "$ROOT_DIR/hermes/clip-review.prompt.md"
 create_no_agent_job "clip-ops scheduler tick" "every 15m" "$(basename "$SCHEDULER_SCRIPT")" "Queue due Clipping Ops review builds. Enforce 24/day global cap, 8/day/campaign cap, source gates, backlog guard, and MiniMax Hermes profile readiness."
-create_no_agent_job "clip-ops publish schedule tick" "every 1m" "$(basename "$PUBLISH_SCHEDULER_SCRIPT")" "Queue due approved publish dry-runs at their :14 slots. This only promotes scheduled dry-run jobs; live posting still requires provider readiness and final confirmation."
-create_no_agent_job "clip-ops job dispatcher" "every 10m" "$(basename "$DISPATCHER_SCRIPT")" "Claim and execute queued Clipping Ops Cockpit jobs. Deterministic worker only; live posting requires backend approval/provider/warm-up/final-confirmation gates and never mutates accounts."
+create_no_agent_job "clip-ops publish schedule tick" "every 1m" "$(basename "$PUBLISH_SCHEDULER_SCRIPT")" "Queue due approved publish jobs at their :14 slots. If local auto-post is on and the selected platform is ready, due jobs become live Upload-Post work."
+create_no_agent_job "clip-ops job dispatcher" "every 10m" "$(basename "$DISPATCHER_SCRIPT")" "Claim and execute queued Clipping Ops Cockpit jobs. Live posting requires backend approval, locked Upload-Post profile, provider key, platform warm-up, and local auto-post enablement."
 
 echo "Hermes Clipping Ops jobs installed or already present with profile: $HERMES_PROFILE"

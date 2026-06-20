@@ -467,7 +467,7 @@ async function main() {
     .join("\n") || "- No active campaign-linked production kits.";
   const readinessIsGreen = readiness.overall === "green";
   const campaignVerdict = readinessIsGreen
-    ? "All CEO gates are green from current evidence. Real campaign rendering is still limited to the nomination/review workflow; posting is gated by provider readiness, warm-up, and final confirmation while payouts and account changes remain blocked."
+    ? "All CEO gates are green from current evidence. Real campaign rendering is still limited to the nomination/review workflow; posting is gated by provider readiness, warm-up, locked local profile, and auto-post/final confirmation while payouts and account changes remain blocked."
     : `Local readiness remains **not green** because these evidence gates are not green: ${nonGreenFeatures || "unknown"}. The source-build web handoff is the supported lane now; there is no native Mac app/signing lane in the repo. The final buddy book/install wrap-up still waits for the approved review batch.`;
   const productionRenderDirs = await completeRenderDirs(health.render_root);
   const demoRenderDirs = await completeRenderDirs(health.demo_render_root || "");
@@ -514,7 +514,7 @@ async function main() {
     : "There is no fresh local reference-style study to hide behind. The campaign final profile is the only evidence that matters now because it is tied to approved campaign sources and evidence instead of demo footage.";
   const bluntRendererCritique = [
     renderProofIsGreen
-      ? `The renderer now has ${campaignProofGreenRows.length} approved green campaign final kit(s) from local source media, stored campaign rules, timed transcript evidence, and burned-in subtitle frame proof. Yellow/rejected timing-history kits remain audit records only. This proves campaign-scoped review mechanics; posting still requires provider readiness, warm-up, and final confirmation.`
+      ? `The renderer now has ${campaignProofGreenRows.length} approved green campaign final kit(s) from local source media, stored campaign rules, timed transcript evidence, and burned-in subtitle frame proof. Yellow/rejected timing-history kits remain audit records only. This proves campaign-scoped review mechanics; posting still requires provider readiness, warm-up, locked local profile, and auto-post/final confirmation.`
       : referenceCritiqueLead,
     "Against the stored rubric, active campaign outputs should use the white headline card, central crop, side-fill background, and fast captions while avoiding internal labels or fake proof language.",
     demoRootBatchBroken
@@ -623,7 +623,7 @@ Figma diagram and Figma Slides generation were attempted, but the connected tool
 2. Use Campaigns to refresh the current active streamer-first project set: ${activeCampaignNames.join(", ") || "none"}.
 3. Use Sources only for advanced API checks, watchlist candidates, and future creator campaigns.
 4. Keep demo/local proof kits out of the production Review Kits surface; build campaign review kits only after source provenance and local media are stored.
-5. Review videos in Review Kits; approval auto-creates publish prep and schedules a dry-run into the next future \`:14\` slot. Live posting still requires provider readiness plus final confirmation.
+5. Review videos in Review Kits; approval auto-creates publish prep and schedules the clip into the next future \`:14\` slot. Live posting still requires provider readiness, locked local profile, and auto-post/final confirmation.
 
 ## Hard Stops
 
@@ -651,7 +651,7 @@ Local-first macOS clipping operations appliance. Index many, render few, publish
 See \`${rel(architecturePath)}\`.
 
 ## 4. Safety
-Posting before approved kit, provider readiness, completed warm-up, and final confirmation remains blocked. Payouts, account mutation, gambling clearance, and revenue guarantees remain blocked.
+Posting before approved kit, provider readiness, completed warm-up, locked local profile, and auto-post/final confirmation remains blocked. Payouts, account mutation, gambling clearance, and revenue guarantees remain blocked.
 
 ## 5. Current Readiness
 Codex source handoff is a source/build web lane and does not require Apple notarization. There is no supported native Mac app distribution path in this repo now. Yellow is never ready.

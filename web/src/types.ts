@@ -127,10 +127,12 @@ export type JobRecord = {
 
 export type PublishStatus = {
   supported_platforms?: string[];
+  capture_platforms?: string[];
   default_platforms?: string[];
   auto_schedule?: {
     auto_slot_on_approve?: boolean;
     mode?: string;
+    auto_post_approved?: boolean;
     slots_per_day?: number;
     slot_minute?: number;
     slot_hours?: number[];
@@ -147,6 +149,16 @@ export type PublishStatus = {
     blockers?: string[];
     supported_platforms?: string[];
     platforms?: Record<string, { warmup_complete?: boolean; live_ready?: boolean; blockers?: string[] }>;
+  };
+  runway?: {
+    scheduled_count?: number;
+    live_scheduled_count?: number;
+    check_scheduled_count?: number;
+    slots_per_day?: number;
+    estimated_hours?: number;
+    estimated_days?: number;
+    next_slot?: string;
+    last_slot?: string;
   };
   latest_jobs?: PublishJob[];
 };

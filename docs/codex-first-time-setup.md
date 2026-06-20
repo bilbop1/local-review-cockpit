@@ -45,10 +45,10 @@ cd local-review-cockpit
 - The repo never includes Upload-Post keys or connected account sessions.
 - `UPLOAD_POST_API_KEY` is allowed only as a private runtime environment variable.
 - The macOS Keychain account is `uploadpost.api_key`.
-- The Upload-Post profile is a local app setting. Publish jobs do not choose or override it; every dry-run/live request uses the single configured profile for that local install.
+- The Upload-Post profile is a local app setting. Publish jobs do not choose or override it; every package-check/live request uses the single configured profile for that local install.
 - The default live-ready platform is TikTok only.
-- Approving a kit schedules a dry-run publish validation into the next local `:14` slot.
-- Live upload still requires provider key, configured Upload-Post profile, platform warm-up, live mode, and final GUI confirmation.
+- Approving a kit schedules it into the next local `:14` slot.
+- Live upload still requires provider key, configured Upload-Post profile, platform warm-up, live mode, and the local auto-post switch or a final GUI confirmation.
 
 ## Local Checks
 

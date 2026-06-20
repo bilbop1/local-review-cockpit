@@ -20,6 +20,7 @@ UPLOADPOST_PROVIDER = "uploadpost"
 UPLOADPOST_BASE_URL = "https://api.upload-post.com/api"
 SUPPORTED_PLATFORMS = ("tiktok", "instagram", "youtube", "facebook")
 DEFAULT_PUBLISH_PLATFORMS = ("tiktok",)
+CAPTURE_PLATFORMS = ("tiktok", "instagram", "youtube", "facebook", "x")
 PUBLISH_MODES = ("dry_run", "live")
 AUTO_PUBLISH_SLOT_HOURS = (0, 3, 6, 9, 12, 15, 18, 21)
 AUTO_PUBLISH_SLOT_MINUTE = 14
@@ -87,6 +88,10 @@ def uploadpost_user() -> str:
 def uploadpost_mode() -> str:
     mode = _setting("publish.uploadpost.mode", "dry_run").strip().lower()
     return mode if mode in PUBLISH_MODES else "dry_run"
+
+
+def auto_post_approved_enabled() -> bool:
+    return _bool_setting("publish.auto_post_approved")
 
 
 def _platform_env_name(platform: str) -> str:
@@ -173,8 +178,51 @@ def set_publish_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
     if "user" in payload:
         user = str(payload.get("user", "")).strip() or "local-operator"
         _set_setting("publish.uploadpost.user", user)
+    if "auto_post_approved" in payload:
+        _set_setting("publish.auto_post_approved", "true" if bool(payload.get("auto_post_approved")) else "false")
     db.log_audit("operator", "update_publish_settings", "publish_settings", UPLOADPOST_PROVIDER, "stored", "api")
+    if "auto_post_approved" in payload:
+        try:
+            reschedule_approved_backlog(requested_by="publish-settings")
+        except PublishError as exc:
+            db.log_audit("system", "auto_post_sync_blocked", "publish_settings", UPLOADPOST_PROVIDER, exc.code, exc.detail[:800])
     return publish_status()
+
+
+def publish_runway_summary(now: Optional[datetime] = None) -> Dict[str, Any]:
+    current = _local_now(now)
+    scheduled = [
+        _job_from_row(row)
+        for row in db.rows(
+            """
+            SELECT *
+            FROM publish_jobs
+            WHERE status='scheduled'
+              AND scheduled_at != ''
+            ORDER BY scheduled_at ASC
+            """
+        )
+    ]
+    future: List[Dict[str, Any]] = []
+    for job in scheduled:
+        scheduled_at = _parse_time(job.get("scheduled_at"), fallback_tz=current.tzinfo)
+        if scheduled_at and scheduled_at > current:
+            future.append(job)
+    live_count = sum(1 for job in future if job.get("mode") == "live")
+    check_count = sum(1 for job in future if job.get("mode") == "dry_run")
+    next_slot = str(future[0].get("scheduled_at", "")) if future else ""
+    last_slot = str(future[-1].get("scheduled_at", "")) if future else ""
+    hours = len(future) * 24 / max(1, len(AUTO_PUBLISH_SLOT_HOURS))
+    return {
+        "scheduled_count": len(future),
+        "live_scheduled_count": live_count,
+        "check_scheduled_count": check_count,
+        "slots_per_day": len(AUTO_PUBLISH_SLOT_HOURS),
+        "estimated_hours": round(hours, 2),
+        "estimated_days": round(hours / 24, 2),
+        "next_slot": next_slot,
+        "last_slot": last_slot,
+    }
 
 
 def publish_status() -> Dict[str, Any]:
@@ -183,13 +231,17 @@ def publish_status() -> Dict[str, Any]:
     mode = uploadpost_mode()
     platform_statuses = uploadpost_platform_statuses(mode, key_present)
     blockers = uploadpost_provider_blockers(DEFAULT_PUBLISH_PLATFORMS)
+    auto_post = auto_post_approved_enabled()
+    runway = publish_runway_summary()
     return {
         "status": "green" if not blockers else "yellow",
         "supported_platforms": list(SUPPORTED_PLATFORMS),
+        "capture_platforms": list(CAPTURE_PLATFORMS),
         "default_platforms": list(DEFAULT_PUBLISH_PLATFORMS),
         "auto_schedule": {
             "auto_slot_on_approve": True,
-            "mode": "dry_run",
+            "mode": "live" if auto_post else "check",
+            "auto_post_approved": auto_post,
             "slots_per_day": len(AUTO_PUBLISH_SLOT_HOURS),
             "slot_minute": AUTO_PUBLISH_SLOT_MINUTE,
             "slot_hours": list(AUTO_PUBLISH_SLOT_HOURS),
@@ -208,11 +260,12 @@ def publish_status() -> Dict[str, Any]:
             "blockers": blockers,
             "platforms": platform_statuses,
         },
+        "runway": runway,
         "latest_jobs": visible_publish_jobs(20),
         "notes": [
-            "Approval auto-slots a scheduled dry-run publish job into the next future :14 slot.",
-            "Dry-run validates approved review kits without uploading.",
-            "Live posting requires approved kit, Upload-Post key, completed warm-up, live mode, and final confirmation.",
+            "Approval puts an approved clip into the next future :14 slot.",
+            "When auto-post is on and TikTok is ready, scheduled clips post through the locked local Upload-Post profile.",
+            "Instagram, YouTube, Facebook, and X URL capture is tracked separately from today's TikTok-only posting.",
         ],
     }
 
@@ -375,9 +428,9 @@ def _pending_publish_jobs_for_rebalance(now: Optional[datetime] = None, *, inclu
         SELECT p.*, r.campaign_slug
         FROM publish_jobs p
         JOIN render_kits r ON r.id = p.kit_id
-        WHERE p.mode='dry_run'
-          AND p.status='scheduled'
+        WHERE p.status='scheduled'
           AND p.scheduled_at != ''
+          AND p.mode IN ('dry_run','live')
         ORDER BY p.scheduled_at ASC, p.created_at ASC
         """
     ):
@@ -423,7 +476,7 @@ def rebalance_publish_schedule(now: Optional[datetime] = None, *, include_stale:
     return [get_publish_job(str(record["id"])) for record in ordered]
 
 
-def normalize_scheduled_dry_run_platforms(platforms: Iterable[Any] = DEFAULT_PUBLISH_PLATFORMS) -> List[Dict[str, Any]]:
+def normalize_scheduled_publish_platforms(platforms: Iterable[Any] = DEFAULT_PUBLISH_PLATFORMS) -> List[Dict[str, Any]]:
     desired = normalize_platforms(platforms)
     desired_json = json.dumps(desired)
     now_text = db.utc_now()
@@ -433,10 +486,9 @@ def normalize_scheduled_dry_run_platforms(platforms: Iterable[Any] = DEFAULT_PUB
         SELECT p.id, p.package_id, p.platforms_json, pp.platforms_json AS package_platforms_json
         FROM publish_jobs p
         JOIN publish_packages pp ON pp.id = p.package_id
-        WHERE p.mode='dry_run'
-          AND p.status='scheduled'
+        WHERE p.status='scheduled'
           AND p.stage='waiting-for-slot'
-          AND p.final_confirmed=0
+          AND p.mode IN ('dry_run','live')
         ORDER BY p.scheduled_at ASC, p.created_at ASC
         """
     ):
@@ -454,6 +506,44 @@ def normalize_scheduled_dry_run_platforms(platforms: Iterable[Any] = DEFAULT_PUB
     return updated
 
 
+def normalize_scheduled_dry_run_platforms(platforms: Iterable[Any] = DEFAULT_PUBLISH_PLATFORMS) -> List[Dict[str, Any]]:
+    return normalize_scheduled_publish_platforms(platforms)
+
+
+def sync_scheduled_auto_post_mode(platforms: Iterable[Any] = DEFAULT_PUBLISH_PLATFORMS) -> List[Dict[str, Any]]:
+    desired = normalize_platforms(platforms)
+    desired_mode = "live" if auto_post_approved_enabled() else "dry_run"
+    if desired_mode == "live":
+        blockers = uploadpost_provider_blockers(desired)
+        if blockers:
+            raise PublishError("auto_post_blocked", "; ".join(blockers))
+    now_text = db.utc_now()
+    updated: List[Dict[str, Any]] = []
+    for row in db.rows(
+        """
+        SELECT *
+        FROM publish_jobs
+        WHERE status='scheduled'
+          AND stage='waiting-for-slot'
+          AND mode IN ('dry_run','live')
+        ORDER BY scheduled_at ASC, created_at ASC
+        """
+    ):
+        final_confirmed = 1 if desired_mode == "live" else 0
+        if str(row.get("mode", "")) == desired_mode and int(row.get("final_confirmed", 0) or 0) == final_confirmed:
+            continue
+        db.execute(
+            """
+            UPDATE publish_jobs
+            SET mode=?, final_confirmed=?, updated_at=?
+            WHERE id=?
+            """,
+            (desired_mode, final_confirmed, now_text, row["id"]),
+        )
+        updated.append(get_publish_job(str(row["id"])))
+    return updated
+
+
 def reschedule_approved_backlog(
     *,
     now: Optional[datetime] = None,
@@ -463,13 +553,14 @@ def reschedule_approved_backlog(
     db.init_db()
     current = _local_now(now)
     backlog = schedule_approved_backlog(now=current, requested_by=requested_by, limit=limit)
-    normalized_platforms = normalize_scheduled_dry_run_platforms()
+    normalized_platforms = normalize_scheduled_publish_platforms()
+    synced_mode = sync_scheduled_auto_post_mode()
     jobs = rebalance_publish_schedule(now=current, include_stale=True)
     stale_or_active = [
         job
         for job in jobs
         if str(job.get("status", "")) == "scheduled"
-        and str(job.get("mode", "")) == "dry_run"
+        and str(job.get("mode", "")) in {"dry_run", "live"}
         and _parse_time(job.get("scheduled_at"), fallback_tz=current.tzinfo)
     ]
     db.log_audit(
@@ -483,6 +574,7 @@ def reschedule_approved_backlog(
                 "scheduled_backlog": len(backlog["scheduled"]),
                 "rescheduled": len(stale_or_active),
                 "normalized_platforms": len(normalized_platforms),
+                "synced_mode": len(synced_mode),
                 "blocked": len(backlog["blocked"]),
             }
         )[:800],
@@ -494,6 +586,7 @@ def reschedule_approved_backlog(
         "blocked": backlog["blocked"],
         "rescheduled_count": len(stale_or_active),
         "normalized_platform_count": len(normalized_platforms),
+        "synced_mode_count": len(synced_mode),
         "jobs": stale_or_active,
     }
 
@@ -618,16 +711,22 @@ def create_publish_job(payload: Dict[str, Any]) -> Dict[str, Any]:
     title = str(payload.get("title", "")).strip() or str(package["title"])
     caption = str(payload.get("caption", "")).strip() or str(package["caption"])
     scheduled_at = str(payload.get("scheduled_at", "")).strip()
-    defer_until_due = bool(payload.get("defer_hermes_until_due")) and mode == "dry_run" and bool(scheduled_at)
+    defer_until_due = bool(payload.get("defer_hermes_until_due")) and bool(scheduled_at)
+    auto_confirm_live = bool(payload.get("auto_confirm_live")) and mode == "live"
+    if auto_confirm_live:
+        blockers = uploadpost_provider_blockers(platforms)
+        if blockers:
+            raise PublishError("auto_live_provider_blocked", "; ".join(blockers))
     job_id = db.new_id("pubjob")
     now = db.utc_now()
     status = "scheduled" if defer_until_due else ("queued" if mode == "dry_run" else "awaiting_confirmation")
     stage = "waiting-for-slot" if defer_until_due else ("queued-for-hermes" if mode == "dry_run" else "awaiting-final-confirmation")
+    final_confirmed = 1 if auto_confirm_live else 0
     db.execute(
         """
         INSERT INTO publish_jobs
-          (id, package_id, kit_id, provider, mode, platforms_json, title, caption, scheduled_at, status, stage, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (id, package_id, kit_id, provider, mode, platforms_json, title, caption, scheduled_at, final_confirmed, status, stage, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             job_id,
@@ -639,6 +738,7 @@ def create_publish_job(payload: Dict[str, Any]) -> Dict[str, Any]:
             title,
             caption,
             scheduled_at,
+            final_confirmed,
             status,
             stage,
             now,
@@ -669,6 +769,9 @@ def schedule_approved_kit(
     existing_job = _existing_publish_job_for_kit(kit_id)
     package = create_publish_package(kit_id, platforms=platforms)
     if existing_job:
+        if auto_post_approved_enabled() and existing_job.get("mode") == "dry_run" and existing_job.get("status") == "scheduled":
+            sync_scheduled_auto_post_mode(platforms=platforms)
+            existing_job = get_publish_job(str(existing_job["id"]))
         return {
             "status": existing_job.get("status", "scheduled"),
             "publish_package": package,
@@ -677,14 +780,16 @@ def schedule_approved_kit(
         }
 
     first_slot = _future_slots(1, now=now)[0].isoformat(timespec="seconds")
+    publish_mode = "live" if auto_post_approved_enabled() else "dry_run"
     job = create_publish_job(
         {
             "package_id": package["id"],
-            "mode": "dry_run",
+            "mode": publish_mode,
             "platforms": list(platforms),
             "scheduled_at": first_slot,
             "requested_by": requested_by,
             "defer_hermes_until_due": True,
+            "auto_confirm_live": publish_mode == "live",
         }
     )
     rebalanced = rebalance_publish_schedule(now=now)
@@ -785,9 +890,9 @@ def publish_schedule_tick(now: Optional[datetime] = None, requested_by: str = "p
         """
         SELECT *
         FROM publish_jobs
-        WHERE mode='dry_run'
-          AND status='scheduled'
+        WHERE status='scheduled'
           AND scheduled_at != ''
+          AND mode IN ('dry_run','live')
         ORDER BY scheduled_at ASC
         """
     ):
@@ -814,12 +919,29 @@ def publish_schedule_tick(now: Optional[datetime] = None, requested_by: str = "p
             )
             blocked.append({"publish_job_id": job_id, "error": exc.detail})
             continue
+        mode = str(row.get("mode", "dry_run"))
+        if mode == "live":
+            blockers = uploadpost_provider_blockers(_json_loads(row.get("platforms_json"), []))
+            if not int(row.get("final_confirmed", 0) or 0):
+                blockers.append("Live posting is not armed for this scheduled job.")
+            if blockers:
+                db.execute(
+                    """
+                    UPDATE publish_jobs
+                    SET status='blocked', stage='blocked', error=?, updated_at=?
+                    WHERE id=?
+                    """,
+                    ("; ".join(blockers)[:1200], db.utc_now(), job_id),
+                )
+                blocked.append({"publish_job_id": job_id, "error": "; ".join(blockers)})
+                continue
+        intent = "publish_live" if mode == "live" else "publish_dry_run"
         hermes_job = db.create_job_intent(
-            "publish_dry_run",
+            intent,
             {
                 "publish_job_id": job_id,
                 "package_id": package["id"],
-                "mode": "dry_run",
+                "mode": mode,
                 "scheduled_at": str(row.get("scheduled_at", "")),
             },
             requested_by=requested_by,
@@ -887,7 +1009,7 @@ def _job_blockers(job: Dict[str, Any], package: Dict[str, Any]) -> List[str]:
     blockers: List[str] = []
     if job["status"] == "cancelled":
         blockers.append("Publish job was cancelled.")
-    if job["mode"] == "dry_run" and job["status"] == "scheduled":
+    if job["status"] == "scheduled":
         scheduled_at = _parse_time(job.get("scheduled_at"))
         if scheduled_at and scheduled_at > _local_now():
             blockers.append(f"Publish job is scheduled for {scheduled_at.isoformat(timespec='seconds')}.")

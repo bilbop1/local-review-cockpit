@@ -422,6 +422,80 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertEqual(publishing.get_publish_job(job["id"])["platforms"], ["tiktok"])
         self.assertEqual(publishing.get_publish_package(package["id"])["platforms"], ["tiktok"])
 
+    def test_auto_post_approved_schedules_live_job_only_when_due(self):
+        now = datetime(2026, 6, 14, 17, 15, tzinfo=timezone.utc)
+        kit_id = self.make_publishable_kit()
+        with mock.patch.dict(os.environ, {"UPLOAD_POST_API_KEY": "secret_test_key"}, clear=False):
+            publishing.set_publish_settings(
+                {
+                    "mode": "live",
+                    "user": "JasonMyWeen",
+                    "platform_warmup": {"tiktok": True},
+                    "auto_post_approved": True,
+                }
+            )
+            scheduled = publishing.schedule_approved_kit(kit_id, now=now, requested_by="test")
+            job = scheduled["publish_job"]
+            due_at = datetime.fromisoformat(job["scheduled_at"])
+
+            self.assertEqual(job["mode"], "live")
+            self.assertTrue(job["final_confirmed"])
+            self.assertEqual(job["status"], "scheduled")
+            self.assertEqual(db.rows("SELECT * FROM job_runs WHERE intent='publish_live'"), [])
+
+            early = publishing.publish_schedule_tick(now=due_at - timedelta(minutes=1), requested_by="test")
+            self.assertEqual(early["queued"], [])
+            self.assertEqual(db.rows("SELECT * FROM job_runs WHERE intent='publish_live'"), [])
+
+            due = publishing.publish_schedule_tick(now=due_at, requested_by="test")
+
+            self.assertEqual(due["status"], "queued")
+            self.assertEqual(due["queued"][0]["intent"], "publish_live")
+            queued_job = publishing.get_publish_job(job["id"])
+            self.assertEqual(queued_job["status"], "queued")
+            self.assertEqual(queued_job["stage"], "queued-for-hermes")
+
+            with mock.patch(
+                "clipping_ops_backend.publishing._send_uploadpost",
+                return_value={"success": True, "id": "upload_123", "results": {"tiktok": {"url": "https://www.tiktok.com/@jason/video/123"}}},
+            ):
+                posted = publishing.execute_publish_job(job["id"])
+
+        self.assertEqual(posted["status"], "succeeded")
+        posted_job = publishing.get_publish_job(job["id"])
+        self.assertEqual(posted_job["status"], "posted")
+        self.assertEqual(posted_job["post_urls"]["tiktok"], "https://www.tiktok.com/@jason/video/123")
+
+    def test_reschedule_approved_backlog_arms_existing_queue_for_auto_post(self):
+        old_now = datetime(2026, 6, 14, 17, 15, tzinfo=timezone.utc)
+        new_now = datetime(2026, 6, 18, 15, 30, tzinfo=timezone.utc)
+        base_kit_id = self.make_publishable_kit()
+        kit_ids = [
+            base_kit_id,
+            self.clone_publishable_kit(base_kit_id, campaign_slug="plaqueboymax"),
+            self.clone_publishable_kit(base_kit_id, campaign_slug="jasontheween"),
+        ]
+        for kit_id in kit_ids:
+            publishing.schedule_approved_kit(kit_id, now=old_now, requested_by="test")
+
+        with mock.patch.dict(os.environ, {"UPLOAD_POST_API_KEY": "secret_test_key"}, clear=False):
+            publishing.set_publish_settings(
+                {
+                    "mode": "live",
+                    "user": "JasonMyWeen",
+                    "platform_warmup": {"tiktok": True},
+                    "auto_post_approved": True,
+                }
+            )
+            result = publishing.reschedule_approved_backlog(now=new_now, requested_by="test")
+
+        self.assertEqual(result["status"], "scheduled")
+        self.assertEqual(result["rescheduled_count"], 3)
+        self.assertTrue(all(item["mode"] == "live" for item in result["jobs"]))
+        self.assertTrue(all(item["final_confirmed"] for item in result["jobs"]))
+        self.assertTrue(all(item["platforms"] == ["tiktok"] for item in result["jobs"]))
+        self.assertTrue(all(datetime.fromisoformat(str(item["scheduled_at"])) > new_now for item in result["jobs"]))
+
     def test_publish_blocks_unapproved_demo_and_invalid_platforms(self):
         unapproved_id = self.make_publishable_kit(approved=False)
         with self.assertRaises(publishing.PublishError) as unapproved:
@@ -478,6 +552,7 @@ class BackendSmokeTests(unittest.TestCase):
             self.assertEqual(status["default_platforms"], ["tiktok"])
             self.assertEqual(status["provider"]["user"], "JasonMyWeen")
             self.assertTrue(status["provider"]["profile_configured"])
+            self.assertFalse(status["auto_schedule"]["auto_post_approved"])
             self.assertTrue(status["provider"]["platforms"]["tiktok"]["live_ready"])
             self.assertFalse(status["provider"]["platforms"]["instagram"]["warmup_complete"])
             self.assertFalse(status["provider"]["platforms"]["youtube"]["warmup_complete"])
