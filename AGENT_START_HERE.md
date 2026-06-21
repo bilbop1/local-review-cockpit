@@ -29,7 +29,15 @@ Expected result in a no-key clone:
 - Build/tests/smoke/security should pass.
 - Twitch, Kick, Upload-Post, Clipping.net, and social-account credentials should be reported missing or blocked.
 - Missing credentials are expected blockers, not setup failure.
-- Live posting must remain locked.
+- Live posting must remain locked until a local operator configures their own Upload-Post key, exact profile, warmed platform, live mode, and auto-post/manual confirmation.
+
+For a friend/buddy install where the operator is ready to provide local keys, use:
+
+```bash
+./script/codex_buddy_bootstrap.sh
+```
+
+That guided path verifies no-key mode, configures MiniMax/Hermes, stores local Twitch/Kick/Upload-Post credentials, locks the operator's exact Upload-Post profile, installs startup/Hermes jobs, and queues first campaign research/build jobs.
 
 ## Read These Next
 
@@ -57,7 +65,7 @@ Do not run foreground mouse-driven GUI QA on an operator's active Mac unless the
 
 ## Current Product Shape
 
-The repo is a source-build local web cockpit plus Python backend, not a media drop and not a native app bundle. Each operator supplies their own credentials, Hermes profile, Discord config, campaign access, account warm-up, and final posting confirmations.
+The repo is a source-build local web cockpit plus Python backend, not a media drop and not a native app bundle. Each operator supplies their own credentials, Hermes profile, Discord config, campaign access, account warm-up, and posting enablement. Upload-Post is always locked to one exact local profile name; jobs must not pick alternate Upload-Post profiles.
 
 Normal operation:
 
@@ -68,4 +76,4 @@ Normal operation:
 
 Then open `http://127.0.0.1:8765/app`. There is no native Swift/macOS app path in this repo anymore; the browser cockpit is the only supported human UI.
 
-Rejected review kits are killed, not revised directly. The rejection note becomes learning signal for the next cycle. Live Upload-Post work is intentionally locked until account warm-up is complete and the operator provides their own key locally.
+Rejected review kits are killed, not revised directly. The rejection note becomes learning signal for the next cycle. Approved kits are scheduled into future `:14` slots. Live Upload-Post work is intentionally locked until account warm-up is complete, the operator provides their own key locally, the exact profile is configured, and auto-post or manual confirmation is enabled.

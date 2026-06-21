@@ -1570,6 +1570,65 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertTrue(proof["ok"])
         self.assertEqual(proof["job_id"], job["id"])
 
+    def test_buddy_kickoff_plans_and_queues_starter_jobs(self):
+        script_path = Path(__file__).resolve().parents[1] / "script" / "queue_buddy_campaign_kickoff.py"
+        spec = importlib.util.spec_from_file_location("queue_buddy_campaign_kickoff", script_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        dry = module.queue_jobs(["yourrage", "plaqueboymax"], dry_run=True)
+        self.assertEqual(dry["status"], "planned")
+        self.assertEqual(dry["campaigns"], ["yourrage", "plaqueboymax"])
+        self.assertEqual(dry["queued"], [])
+        self.assertEqual(db.rows("SELECT * FROM job_runs"), [])
+
+        queued = module.queue_jobs(["yourrage"], force_new=True)
+        self.assertEqual(queued["status"], "queued")
+        self.assertEqual(queued["queued_count"], 5)
+        self.assertEqual(queued["hermes_profile"], db.MINIMAX_HERMES_PROFILE)
+        self.assertEqual(
+            [row["intent"] for row in queued["queued"]],
+            [
+                "refresh_campaigns",
+                "refresh_campaign_project",
+                "discover_campaign_sources",
+                "scheduled_campaign_review_build",
+                "review_learning_summary",
+            ],
+        )
+
+        rows = db.rows("SELECT intent, campaign_slug, requested_by, hermes_profile FROM job_runs")
+        self.assertEqual(
+            sorted(row["intent"] for row in rows),
+            sorted(
+                [
+                    "refresh_campaigns",
+                    "refresh_campaign_project",
+                    "discover_campaign_sources",
+                    "scheduled_campaign_review_build",
+                    "review_learning_summary",
+                ]
+            ),
+        )
+        self.assertEqual(
+            [row["campaign_slug"] for row in queued["queued"]],
+            [
+                "",
+                "yourrage",
+                "yourrage",
+                "yourrage",
+                "",
+            ],
+        )
+        self.assertTrue(all(row["requested_by"] == "codex-buddy-bootstrap" for row in rows))
+        self.assertTrue(all(row["hermes_profile"] == db.MINIMAX_HERMES_PROFILE for row in rows))
+        review_job = next(row for row in queued["queued"] if row["intent"] == "scheduled_campaign_review_build")
+        self.assertEqual(review_job["payload"]["style"], db.CAMPAIGN_SHORT_PROFILE)
+        self.assertEqual(review_job["payload"]["freshness_ladder_hours"], list(db.FRESHNESS_LADDER_HOURS))
+        self.assertEqual(review_job["payload"]["selection_mode"], "fresh_best_candidate")
+
     def test_visible_jobs_compact_omits_heavy_json_and_truncates_text(self):
         job_id = db.create_job(
             "heavy job",

@@ -25,7 +25,7 @@ Your job as the incoming session:
 3. Help the local operator add their own API keys, Hermes profile, Discord config, and campaign access.
 4. Keep the backend/SQLite as source of truth.
 5. Use Hermes as the normal orchestration layer.
-6. Never publish before an approved review kit, configured provider, completed account warm-up, and final GUI confirmation; never submit payouts, connect accounts, rebrand accounts, or claim revenue guarantees.
+6. Never publish before an approved review kit, configured provider, exact Upload-Post profile, completed account warm-up, live mode, and local auto-post or final GUI confirmation; never submit payouts, connect accounts, rebrand accounts, or claim revenue guarantees.
 
 ## Truth Snapshot
 
@@ -71,6 +71,14 @@ backend/.venv/bin/python script/verify_streamer_composition.py
 
 No-key mode should show missing Twitch/Kick/Upload-Post credentials. That is correct until the operator supplies their own keys.
 
+For a friend install where the operator is ready to provide keys and wants Codex to set up the whole local lane, run:
+
+```bash
+./script/codex_buddy_bootstrap.sh
+```
+
+That script verifies the clone, configures MiniMax/Hermes, stores local Twitch/Kick/Upload-Post credentials, locks one Upload-Post profile, installs startup/Hermes jobs, and queues the first campaign refresh/source/build jobs.
+
 ## What The System Is
 
 Clipping Ops Cockpit is a local-first macOS clipping operations appliance.
@@ -82,12 +90,12 @@ The intended architecture is:
 - Hermes: normal orchestration layer for campaign refreshes, source discovery, review sweeps, and daily operations.
 - Deterministic scripts: source download, transcription, ffmpeg rendering, validation, packaging, and tests.
 - Discord: notifications only.
-- Human operator: the only entity allowed to approve review kits and confirm live publishing.
+- Human operator: the only entity allowed to approve review kits and arm live publishing.
 
 The system is not:
 
 - A cloud SaaS.
-- A blind autopublisher that can post without review approval, provider readiness, warm-up completion, and final human confirmation.
+- A blind autopublisher that can post without review approval, provider readiness, exact Upload-Post profile, platform warm-up, live mode, and local auto-post/manual confirmation.
 - A payout submitter.
 - A campaign account manager.
 - A revenue guarantee.
@@ -121,6 +129,12 @@ cd local-review-cockpit
 
 No-key mode should show Twitch/Kick/Upload-Post credentials as missing. That is correct. The local web cockpit should open at `http://127.0.0.1:8765/app`; production campaign and publish jobs must block or stay in package-check mode until the local operator supplies their own credentials, source access, account warm-up completion, and posting confirmation/auto-post settings.
 
+When credentials are ready, the full guided path is:
+
+```bash
+./script/codex_buddy_bootstrap.sh
+```
+
 ## Credential Setup Expectations
 
 Each operator must provide their own platform credentials.
@@ -142,9 +156,16 @@ Kick:
 Hermes:
 
 - A local Hermes installation.
-- A working Hermes profile, usually `default`.
+- A working Hermes profile, normally `clipping-ops-minimax`.
 - Hermes cron/jobs installed from this repo.
 - No copied auth from the original machine.
+
+Upload-Post:
+
+- One local API key stored outside the repo.
+- One exact local profile name stored in backend settings.
+- TikTok can be the first posting platform after warm-up.
+- Instagram, YouTube, Facebook, and X stay capture-only until warmed and explicitly enabled later.
 
 Discord:
 

@@ -1,10 +1,10 @@
 # Local Review Cockpit
 
-Local Review Cockpit is a browser-based local control cockpit and backend for running agent-assisted review work without letting the agent publish, spend money, or touch private account credentials.
+Local Review Cockpit is a browser-based local control cockpit and backend for running agent-assisted review work while keeping private account credentials and posting power locked to the local operator's machine.
 
 I built it because most agent demos stop at "the model wrote a draft." The work after that is where things usually break: source checks, queue state, review notes, retry logic, rendered previews, safety gates, and a human sign-off that is hard to skip by accident.
 
-The current build is aimed at short-form video operations, but the pattern is broader than that. Keep the sensitive data local. Let agents propose and prepare work. Make deterministic scripts handle the parts that need to be repeatable. Put the final call in front of a human.
+The current build is aimed at short-form video operations, but the pattern is broader than that. Keep the sensitive data local. Let agents propose, prepare, and schedule work. Make deterministic scripts handle the parts that need to be repeatable. Put posting behind profile locks, warm-up checks, and explicit local approval.
 
 This public repo is source-only. It does not include API keys, Upload-Post keys, Hermes auth, Discord tokens, browser sessions, Keychain exports, private SQLite data, source media, rendered videos, payout pages, or account credentials.
 
@@ -20,7 +20,7 @@ The low-quota incoming path is:
 
 That command verifies the source-build clone without requiring secrets. Missing Twitch/Kick/Upload-Post credentials are expected in no-key mode.
 
-For a guided new-operator install, hand Codex the repo URL plus [docs/codex-first-time-setup.md](docs/codex-first-time-setup.md). The setup flow verifies no-key mode first, configures Hermes/MiniMax locally, then asks for Upload-Post last after the operator confirms account warm-up.
+For a guided new-operator install, hand Codex the repo URL plus [docs/codex-buddy-bootstrap.md](docs/codex-buddy-bootstrap.md). The setup flow verifies no-key mode first, configures Hermes/MiniMax locally, stores local Twitch/Kick/Upload-Post credentials, locks one Upload-Post profile, then queues the first campaign research/build wave.
 
 ## What Is In The Repo
 
@@ -49,6 +49,12 @@ cd local-review-cockpit
 ./script/build_and_run.sh --verify
 ```
 
+For the streamlined buddy install that asks for local keys and queues the first review work:
+
+```bash
+./script/codex_buddy_bootstrap.sh
+```
+
 Run the cockpit:
 
 ```bash
@@ -75,10 +81,12 @@ That starts Vite at `http://127.0.0.1:5173/app` with API proxying to the local b
 ./script/verify_incoming_clone.sh
 ./script/smoke_test.sh
 ./script/setup_buddy_no_key.sh
+./script/codex_buddy_bootstrap.sh
 ./script/install_hermes_clip_ops.sh
 ./script/configure_minimax_hermes_local.sh
 ./script/verify_minimax_hermes.sh
 ./script/store_credentials_keychain.sh
+PYTHONPATH=backend backend/.venv/bin/python script/queue_buddy_campaign_kickoff.py --dry-run --json
 ./script/install_backend_launch_agent.sh
 ./script/run_ceo_readiness_suite.sh
 ./script/security_scan.py
@@ -89,8 +97,8 @@ The supported UI is the browser cockpit. Native Swift/macOS app code has been re
 
 ## Safety Model
 
-- No posting before approved review kit, provider readiness, completed account warm-up, and final GUI confirmation.
-- Upload-Post defaults to TikTok only; Instagram, YouTube, and Facebook stay blocked until each account is warmed and explicitly enabled in local settings.
+- No posting before approved review kit, provider readiness, exact Upload-Post profile lock, selected-platform warm-up, and either local auto-post arming or final GUI confirmation.
+- Upload-Post defaults to TikTok only; Instagram, YouTube, Facebook, and X stay blocked for posting until each account is warmed and explicitly enabled in local settings.
 - No payout submission.
 - No account connection or account rebrand.
 - No real campaign render before the campaign research gate passes.
@@ -101,7 +109,7 @@ The point is not to make the agent timid. The point is to give it a real lane.
 
 ## Daily Review Factory
 
-The supported production rhythm is MiniMax-powered Hermes indexing top streamer clips from the freshest window first: 24h, then 48h, 72h, 4d, and 5d only when the fresher windows are empty or stale. The scheduler queues at most one review kit per active campaign every three hours: three campaigns, eight per campaign, 24 max per local day. The user approves winners and kills weak kits with notes; approvals auto-create publish prep and schedule dry-run validation into the next future local `:14` slot, while kill notes guide the next cycle.
+The supported production rhythm is MiniMax-powered Hermes indexing top streamer clips from the freshest window first: 24h, then 48h, 72h, 4d, and 5d only when the fresher windows are empty or stale. The scheduler queues at most one review kit per active campaign every three hours: three campaigns, eight per campaign, 24 max per local day. The user approves winners and kills weak kits with notes; approvals auto-create publish prep and schedule the next future local `:14` slot. If the local profile is live-ready and auto-post is armed, due approved jobs post through Upload-Post; otherwise they stay in check/manual-confirm mode.
 
 ## Local Data
 
@@ -125,6 +133,7 @@ Canonical agent docs:
 - [AI agent operating contract](docs/AI_AGENT_OPERATING_CONTRACT.md)
 - [Command cookbook](docs/COMMAND_COOKBOOK.md)
 - [Hermes job contract](docs/HERMES_JOB_CONTRACT.md)
+- [Codex buddy bootstrap](docs/codex-buddy-bootstrap.md)
 - [Codex first-time setup](docs/codex-first-time-setup.md)
 - [Campaign selection standard](docs/campaign-selection.md)
 - [Caption style standard](docs/caption-style.md)

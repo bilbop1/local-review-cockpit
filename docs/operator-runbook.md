@@ -16,7 +16,7 @@
 
 ## Hard Stops
 
-- No posting before approved kit, Upload-Post/provider readiness, completed warm-up, and final GUI confirmation.
+- No posting before approved kit, exact Upload-Post profile, provider readiness, completed warm-up, live mode, and local auto-post arming or final GUI confirmation.
 - No payout submission.
 - No account connection or account rebrand.
 - No real campaign render without stored campaign rules, source URL, provenance, and source availability.
