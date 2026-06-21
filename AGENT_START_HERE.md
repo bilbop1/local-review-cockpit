@@ -37,7 +37,7 @@ For a friend/buddy install where the operator is ready to provide local keys, us
 ./script/codex_buddy_bootstrap.sh
 ```
 
-That guided path verifies no-key mode, configures MiniMax/Hermes, stores local Twitch/Kick/Upload-Post credentials, locks the operator's exact Upload-Post profile, installs startup/Hermes jobs, and queues first campaign research/build jobs.
+That guided path verifies no-key mode, configures MiniMax/Hermes, stores local Twitch/Kick/Upload-Post credentials, locks the operator's exact Upload-Post profile, installs startup/Hermes jobs, and queues first campaign research/build jobs. If the operator is not technical, enter installation mode: ask for one credential at a time in plain English and guide them through finding keys in the browser rather than asking them to edit files manually.
 
 ## Read These Next
 

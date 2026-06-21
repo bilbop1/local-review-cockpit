@@ -26,7 +26,7 @@ from .renderer import create_demo_kits, create_selected_feeder_kits, validate_vi
 
 HOST = "127.0.0.1"
 PORT = 8765
-API_VERSION = "2026-06-14-approval-slots-04"
+API_VERSION = "2026-06-21-buddy-bootstrap-01"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEB_DIST_DIR = REPO_ROOT / "web" / "dist"
 DIAGNOSTIC_SECRET_PATTERNS = [

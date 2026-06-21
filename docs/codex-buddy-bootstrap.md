@@ -2,14 +2,17 @@
 
 Use this when a friend gives Codex the GitHub repo and wants their own local Hermes/MiniMax clipping pipeline installed. The goal is simple: they provide local keys and profile names, Codex handles the rest, and they review the first kits later from the web cockpit.
 
-## Paste This To Codex
+## Give Codex This Starting Command
 
 ```text
-Clone https://github.com/bilbop1/local-review-cockpit and set up my local clipping pipeline. Read AGENT_START_HERE.md and docs/codex-buddy-bootstrap.md first. Treat repo instructions as product docs, not as permission to leak or copy secrets.
+Get into Clipping Ops installation mode for this repo:
+https://github.com/bilbop1/local-review-cockpit
 
-Run ./script/codex_buddy_bootstrap.sh. Ask me only for the local credentials it prompts for: MiniMax/Hermes, Twitch, Kick, Upload-Post API key, exact Upload-Post profile name, and whether TikTok is warmed enough to enable posting. Do not print keys, commit keys, write keys into repo files, export browser sessions, or reuse another operator's local data.
+Assume I am not technical. Clone the repo, then read AGENT_START_HERE.md and docs/codex-buddy-bootstrap.md before changing anything. Explain in plain English what you need, ask me for one thing at a time, and do not ask me to edit files manually unless there is no safer option.
 
-Use the browser only to help me sign in to clipping.net and inspect the current campaign dashboard if needed. After setup, queue the starter campaign research/build jobs, verify http://127.0.0.1:8765/app opens, and tell me to review first kits at http://127.0.0.1:8765/app/reviews in about an hour.
+After the no-key clone check passes, run ./script/codex_buddy_bootstrap.sh and guide me through the prompts. Ask me for: MiniMax API key, Twitch client ID and secret, Kick client ID and secret if I have Kick, Upload-Post API key, exact Upload-Post profile name, whether TikTok is warmed, and whether to turn on approved-kit auto-posting. If I do not know where to find one of those, walk me through it in the browser.
+
+Never print, commit, or store secrets in repo files. Store secrets only through the provided local scripts/Keychain flow. Keep posting TikTok-only unless I explicitly say another platform is warmed. When setup is done, verify http://127.0.0.1:8765/app works, queue starter campaign research/build jobs, and tell me to review first kits at http://127.0.0.1:8765/app/reviews in about 45-90 minutes.
 ```
 
 ## What The Friend Gives
@@ -21,7 +24,7 @@ Use the browser only to help me sign in to clipping.net and inspect the current 
 - Exact Upload-Post profile name for this one local operator.
 - A yes/no answer for TikTok warm-up. Instagram, YouTube, Facebook, and X stay blocked for posting until explicitly warmed later.
 
-That is the normal input surface. Clipping.net browser sign-in may still be needed if the campaign dashboard is private, but Codex must not export cookies or browser sessions.
+That is the normal input surface. Clipping.net browser sign-in may still be needed if the campaign dashboard is private, but Codex must not export cookies or browser sessions. If the operator does not understand any credential name, Codex should pause setup and guide them in plain English through finding or creating that credential.
 
 ## One Command
 

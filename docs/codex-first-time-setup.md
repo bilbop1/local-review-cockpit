@@ -2,7 +2,7 @@
 
 Use this when a new operator gives Codex the GitHub link and asks it to install the local review cockpit on their Mac.
 
-For the shortest guided install, use [docs/codex-buddy-bootstrap.md](codex-buddy-bootstrap.md) and run:
+For the shortest guided install, give Codex the starting command in [docs/codex-buddy-bootstrap.md](codex-buddy-bootstrap.md). After cloning, Codex should run:
 
 ```bash
 ./script/codex_buddy_bootstrap.sh
@@ -11,7 +11,7 @@ For the shortest guided install, use [docs/codex-buddy-bootstrap.md](codex-buddy
 ## Pasteable Operator Prompt
 
 ```text
-Clone https://github.com/bilbop1/local-review-cockpit and set it up locally. Start in no-key mode, run the clone verification, and only ask me for credentials after the source build passes. Do not print, commit, or store secrets in repo files. Guide me through Hermes/MiniMax setup first, then Twitch/Kick, then Upload-Post. Lock the exact Upload-Post profile name I give you, keep posting TikTok-only unless I explicitly warm another platform, and queue starter campaign research/build jobs when setup is done.
+Get into Clipping Ops installation mode for https://github.com/bilbop1/local-review-cockpit. Assume I am not technical. Clone the repo, read AGENT_START_HERE.md and docs/codex-buddy-bootstrap.md, then run ./script/codex_buddy_bootstrap.sh. Ask me for one thing at a time in plain English: MiniMax API key, Twitch client ID/secret, Kick client ID/secret if I have Kick, Upload-Post API key, exact Upload-Post profile name, TikTok warm-up status, and whether to turn on approved-kit auto-posting. Do not print, commit, or store secrets in repo files.
 ```
 
 ## Agent Setup Order

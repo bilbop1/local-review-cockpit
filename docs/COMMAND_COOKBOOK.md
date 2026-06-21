@@ -64,6 +64,12 @@ Expected: Twitch, Kick, and Upload-Post credentials are missing; production/live
 
 ## Guided Buddy Install
 
+Give a non-technical operator this Codex starting command first:
+
+```text
+Get into Clipping Ops installation mode for https://github.com/bilbop1/local-review-cockpit. Assume I am not technical. Clone the repo, read AGENT_START_HERE.md and docs/codex-buddy-bootstrap.md, then run ./script/codex_buddy_bootstrap.sh. Ask me for one thing at a time in plain English: MiniMax API key, Twitch client ID/secret, Kick client ID/secret if I have Kick, Upload-Post API key, exact Upload-Post profile name, TikTok warm-up status, and whether to turn on approved-kit auto-posting. Do not print, commit, or store secrets in repo files.
+```
+
 ```bash
 ./script/codex_buddy_bootstrap.sh
 ```

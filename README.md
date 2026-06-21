@@ -20,7 +20,20 @@ The low-quota incoming path is:
 
 That command verifies the source-build clone without requiring secrets. Missing Twitch/Kick/Upload-Post credentials are expected in no-key mode.
 
-For a guided new-operator install, hand Codex the repo URL plus [docs/codex-buddy-bootstrap.md](docs/codex-buddy-bootstrap.md). The setup flow verifies no-key mode first, configures Hermes/MiniMax locally, stores local Twitch/Kick/Upload-Post credentials, locks one Upload-Post profile, then queues the first campaign research/build wave.
+For a guided new-operator install, hand Codex the repo URL plus the install-mode prompt below. The setup flow verifies no-key mode first, configures Hermes/MiniMax locally, stores local Twitch/Kick/Upload-Post credentials, locks one Upload-Post profile, then queues the first campaign research/build wave.
+
+## Give Codex This Starting Command
+
+```text
+Get into Clipping Ops installation mode for this repo:
+https://github.com/bilbop1/local-review-cockpit
+
+Assume I am not technical. Clone the repo, then read AGENT_START_HERE.md and docs/codex-buddy-bootstrap.md before changing anything. Explain in plain English what you need, ask me for one thing at a time, and do not ask me to edit files manually unless there is no safer option.
+
+After the no-key clone check passes, run ./script/codex_buddy_bootstrap.sh and guide me through the prompts. Ask me for: MiniMax API key, Twitch client ID and secret, Kick client ID and secret if I have Kick, Upload-Post API key, exact Upload-Post profile name, whether TikTok is warmed, and whether to turn on approved-kit auto-posting. If I do not know where to find one of those, walk me through it in the browser.
+
+Never print, commit, or store secrets in repo files. Store secrets only through the provided local scripts/Keychain flow. Keep posting TikTok-only unless I explicitly say another platform is warmed. When setup is done, verify http://127.0.0.1:8765/app works, queue starter campaign research/build jobs, and tell me to review first kits at http://127.0.0.1:8765/app/reviews in about 45-90 minutes.
+```
 
 ## What Is In The Repo
 
@@ -135,6 +148,7 @@ Canonical agent docs:
 - [Hermes job contract](docs/HERMES_JOB_CONTRACT.md)
 - [Codex buddy bootstrap](docs/codex-buddy-bootstrap.md)
 - [Codex first-time setup](docs/codex-first-time-setup.md)
+- [v0.3.0 release notes](docs/release-notes/v0.3.0.md)
 - [Campaign selection standard](docs/campaign-selection.md)
 - [Caption style standard](docs/caption-style.md)
 - [Streamer composition standard](docs/streamer-composition.md)
