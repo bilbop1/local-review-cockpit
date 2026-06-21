@@ -77,7 +77,7 @@ For a friend install where the operator is ready to provide keys and wants Codex
 ./script/codex_buddy_bootstrap.sh
 ```
 
-That script verifies the clone, configures MiniMax/Hermes, stores local Twitch/Kick/Upload-Post credentials, locks one Upload-Post profile, installs startup/Hermes jobs, and queues the first campaign refresh/source/build jobs.
+That script verifies the clone, checks existing MiniMax/Hermes wiring before asking for any MiniMax key, stores local Twitch/Kick/Upload-Post credentials, locks one Upload-Post profile, installs startup/Hermes jobs, and queues the first campaign refresh/source/build jobs.
 
 ## What The System Is
 

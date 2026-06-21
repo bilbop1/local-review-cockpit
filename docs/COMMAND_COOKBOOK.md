@@ -67,14 +67,14 @@ Expected: Twitch, Kick, and Upload-Post credentials are missing; production/live
 Give a non-technical operator this Codex starting command first:
 
 ```text
-Get into Clipping Ops installation mode for https://github.com/bilbop1/local-review-cockpit. Assume I am not technical. Clone the repo, read AGENT_START_HERE.md and docs/codex-buddy-bootstrap.md, then run ./script/codex_buddy_bootstrap.sh. Ask me for one thing at a time in plain English: MiniMax API key, Twitch client ID/secret, Kick client ID/secret if I have Kick, Upload-Post API key, exact Upload-Post profile name, TikTok warm-up status, and whether to turn on approved-kit auto-posting. Do not print, commit, or store secrets in repo files.
+Get into Clipping Ops installation mode for https://github.com/bilbop1/local-review-cockpit. Assume I am not technical. Clone the repo, read AGENT_START_HERE.md and docs/codex-buddy-bootstrap.md, then run ./script/codex_buddy_bootstrap.sh. Verify existing Hermes/MiniMax first, and only ask me for a MiniMax API key if the `clipping-ops-minimax` / MiniMax-M3 lane is missing or unusable. Then ask me for one thing at a time in plain English: Twitch client ID/secret, Kick client ID/secret if I have Kick, Upload-Post API key, exact Upload-Post profile name, TikTok warm-up status, and whether to turn on approved-kit auto-posting. Do not print, commit, or store secrets in repo files.
 ```
 
 ```bash
 ./script/codex_buddy_bootstrap.sh
 ```
 
-Runs the friend-install rail: no-key verification, local MiniMax/Hermes setup, Keychain credential prompts, exact Upload-Post profile lock, startup/Hermes job installation, and starter campaign job queueing. Use `--dry-run` to print the plan without changing local settings.
+Runs the friend-install rail: no-key verification, existing MiniMax/Hermes verification, fallback MiniMax setup only when needed, Keychain credential prompts, exact Upload-Post profile lock, startup/Hermes job installation, and starter campaign job queueing. Use `--dry-run` to print the plan without changing local settings.
 
 ## Credential Storage
 

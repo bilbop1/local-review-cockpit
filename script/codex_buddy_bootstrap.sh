@@ -18,14 +18,15 @@ usage() {
 Usage: ./script/codex_buddy_bootstrap.sh [options]
 
 Guided first-machine install for a new local operator. It verifies the clone,
-configures local Hermes/MiniMax and private credentials, locks one Upload-Post
-profile into the backend, installs launch/Hermes jobs, and queues the first
-campaign research/build wave.
+verifies existing Hermes/MiniMax wiring, asks for a MiniMax key only if that
+lane is missing, stores private credentials, locks one Upload-Post profile into
+the backend, installs launch/Hermes jobs, and queues the first campaign
+research/build wave.
 
 Options:
   --dry-run                 Print the plan and run no setup commands.
   --skip-no-key             Skip the isolated no-key verification.
-  --skip-credentials        Skip MiniMax/Twitch/Kick/Upload-Post prompts.
+  --skip-credentials        Skip Hermes check and Twitch/Kick/Upload-Post prompts.
   --skip-launch-agents      Skip backend/web LaunchAgent installation.
   --skip-kickoff            Skip starter Hermes campaign jobs.
   --uploadpost-profile NAME Use this exact Upload-Post profile name.
@@ -133,8 +134,18 @@ fi
 run_step "Build and verify the local web cockpit" "$ROOT_DIR/script/build_and_run.sh" --verify
 
 if [[ "$RUN_CREDENTIALS" == "1" ]]; then
-  run_step "Configure MiniMax-backed Hermes profile" "$ROOT_DIR/script/configure_minimax_hermes_local.sh"
-  run_step "Verify MiniMax-backed Hermes profile" "$ROOT_DIR/script/verify_minimax_hermes.sh"
+  echo
+  echo "==> Verify existing MiniMax-backed Hermes profile"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf 'dry-run: %q\n' "$ROOT_DIR/script/verify_minimax_hermes.sh"
+    echo "dry-run: if verification fails, run $ROOT_DIR/script/configure_minimax_hermes_local.sh"
+  elif "$ROOT_DIR/script/verify_minimax_hermes.sh"; then
+    echo "Existing Hermes/MiniMax wiring is usable; no MiniMax key prompt needed."
+  else
+    echo "Existing Hermes/MiniMax wiring is missing or unusable. Asking for the MiniMax key now."
+    run_step "Configure MiniMax-backed Hermes profile" "$ROOT_DIR/script/configure_minimax_hermes_local.sh"
+    run_step "Verify MiniMax-backed Hermes profile" "$ROOT_DIR/script/verify_minimax_hermes.sh"
+  fi
   run_step "Store Twitch/Kick/Upload-Post credentials in macOS Keychain" "$ROOT_DIR/script/store_credentials_keychain.sh"
 fi
 

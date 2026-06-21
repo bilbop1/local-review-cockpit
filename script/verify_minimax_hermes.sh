@@ -11,6 +11,7 @@ fi
 
 "$PYTHON_BIN" - <<'PY'
 import json
+from pathlib import Path
 import subprocess
 import sys
 import urllib.error
@@ -18,6 +19,7 @@ import urllib.request
 
 SERVICE = "com.bilbop.ClippingOpsCockpit"
 ACCOUNT = "minimax.api_key"
+PROFILE = "clipping-ops-minimax"
 MODEL = "MiniMax-M3"
 
 def keychain_key() -> str:
@@ -29,9 +31,19 @@ def keychain_key() -> str:
     )
     return result.stdout.strip() if result.returncode == 0 else ""
 
+def profile_env_key() -> str:
+    path = Path.home() / ".hermes" / "profiles" / PROFILE / ".env"
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            if raw.startswith("MINIMAX_API_KEY="):
+                return raw.split("=", 1)[1].strip()
+    except Exception:
+        return ""
+    return ""
+
 def model_list_ok(token: str) -> dict:
     if not token:
-        return {"ok": False, "detail": "MiniMax key missing from local Keychain"}
+        return {"ok": False, "detail": "MiniMax key missing from local Keychain and Hermes profile .env"}
     request = urllib.request.Request(
         "https://api.minimax.io/v1/models",
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
@@ -48,8 +60,12 @@ def model_list_ok(token: str) -> dict:
     return {"ok": MODEL in ids, "detail": f"{MODEL} {'available' if MODEL in ids else 'missing'}; models_seen={len(ids)}"}
 
 token = keychain_key()
+source = "keychain" if token else ""
+if not token:
+    token = profile_env_key()
+    source = "hermes_profile_env" if token else ""
 result = model_list_ok(token)
-print(json.dumps({"minimax_api": result}, indent=2))
+print(json.dumps({"minimax_api": {**result, "key_source": source or "missing"}}, indent=2))
 sys.exit(0 if result["ok"] else 1)
 PY
 

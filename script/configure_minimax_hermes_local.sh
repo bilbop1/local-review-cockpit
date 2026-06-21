@@ -38,10 +38,17 @@ if ! command -v hermes >/dev/null 2>&1; then
 fi
 
 LOCAL_SECRET_VALUE="$(security find-generic-password -s "$SERVICE" -a "$ACCOUNT" -w 2>/dev/null || true)"
+PROFILE_ENV="$HOME/.hermes/profiles/$PROFILE/.env"
+if [[ -z "$LOCAL_SECRET_VALUE" && -f "$PROFILE_ENV" ]]; then
+  LOCAL_SECRET_VALUE="$(sed -n 's/^MINIMAX_API_KEY=//p' "$PROFILE_ENV" | head -n 1)"
+  if [[ -n "$LOCAL_SECRET_VALUE" ]]; then
+    echo "Using existing MiniMax key from Hermes profile '$PROFILE'; no MiniMax prompt needed."
+  fi
+fi
 
 if [[ -z "$LOCAL_SECRET_VALUE" ]]; then
   if [[ "$PROMPT_FOR_KEY" != "1" ]]; then
-    echo "MiniMax key missing from local Keychain. Re-run without --no-prompt to store it securely." >&2
+    echo "MiniMax key missing from local Keychain and Hermes profile '$PROFILE'. Re-run without --no-prompt to store it securely." >&2
     exit 1
   fi
   printf "Paste MiniMax key for local Keychain storage only. Input is hidden: " >&2
@@ -63,7 +70,6 @@ fi
 hermes -p "$PROFILE" config set model.provider minimax >/dev/null
 hermes -p "$PROFILE" config set model.default "$MODEL" >/dev/null
 
-PROFILE_ENV="$HOME/.hermes/profiles/$PROFILE/.env"
 mkdir -p "$(dirname "$PROFILE_ENV")"
 umask 077
 {

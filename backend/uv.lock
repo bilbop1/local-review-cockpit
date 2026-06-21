@@ -84,7 +84,7 @@ wheels = [
 
 [[package]]
 name = "clipping-ops-backend"
-version = "0.3.0"
+version = "0.3.1"
 source = { virtual = "." }
 dependencies = [
     { name = "faster-whisper" },
