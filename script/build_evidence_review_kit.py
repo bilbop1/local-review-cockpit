@@ -429,7 +429,10 @@ def resolve_rules(clip: Dict[str, Any], route: Dict[str, Any], grouped_rules: Di
 
 
 def pick_candidate(clip_id: str = "", campaign_slug: str = "", *, quota_recovery: bool = False) -> Candidate:
-    if campaign_slug:
+    if clip_id:
+        clip = db.one("SELECT * FROM clip_candidates WHERE id = ?", (clip_id,))
+        clips = [clip] if clip else []
+    elif campaign_slug:
         clips = db.review_candidate_order(db.campaign_clips(campaign_slug), campaign_slug, quota_recovery=quota_recovery)
     else:
         clips = db.review_candidate_order(
@@ -940,6 +943,34 @@ def _pattern_summary_hook(title: str, handle: str, transcript_text: str = "") ->
     name = streamer_display_name(handle)
     clean = _strip_hook_prefixes(title, handle)
     haystack = f"{clean}\n{str(transcript_text)}".lower()
+    if "emily" in haystack and ("cookout" in haystack or ("bring" in haystack and "item" in haystack)):
+        return f"{name} debated what Emily should bring to the cookout"
+    if "under his bed" in haystack or "streamers room" in haystack or "streamer's room" in haystack:
+        return f"{name} regretted checking another streamer's room"
+    if "notes tab" in haystack and "cousin" in haystack:
+        return f"{name} found a notes-tab reveal that got too personal"
+    if "shotgun" in haystack:
+        return f"{name} turned a shotgun comment into a tense room moment"
+    if "raw vocals" in haystack or "adlibs" in haystack:
+        return f"{name} broke down the raw vocals and adlibs live"
+    if "malphite" in haystack or ("cringe" in haystack and "temple" in haystack):
+        return f"{name} watched the Malphite pick turn painfully cringe"
+    if "here i go" in haystack and ("excuse me" in haystack or "put your hand out" in haystack):
+        return f"{name} got caught in a chaotic crowd moment"
+    if "baited" in haystack and ("bloated" in haystack or "50 pounds" in haystack or "ashley" in haystack):
+        return f"{name} got baited by chat about gaining weight"
+    if ("asianjeff" in haystack or "asian jeff" in haystack) and "ring" in haystack:
+        return f"{name} sent AsianJeff flying out of the ring"
+    if "brucedropemoff" in haystack or "little sis" in haystack or "look sis" in haystack:
+        return f"{name} heard Bruce call out the little-sis pickup bit"
+    if "memory palace" in haystack or "loci method" in haystack:
+        return f"{name} found a wild brain training take"
+    if "no phone call" in haystack or "no dm" in haystack or "max and silky" in haystack:
+        return f"{name} shut down the Paris game pressure"
+    if "florida" in haystack and ("emily" in haystack or "cinna" in haystack):
+        return f"{name} reacted to the Emily and Cinna travel rumor"
+    if "marvel rivals" in haystack and ("emily" in haystack or "cinna" in haystack):
+        return f"{name} caught Emily joining Cinna's Marvel Rivals tourney"
     if "extraemily" in haystack or "extra emily" in haystack:
         return f"{name} shut down the ExtraEmily comparison"
     if "strange link" in haystack or "what is this land" in haystack or "pmo" in haystack:
@@ -1173,13 +1204,37 @@ def _reference_top_hook_lines(
     return _balanced_top_hook_lines(draw, text, style_font, emoji_font, max_width)
 
 
-def reference_top_hook_text(hook: str) -> str:
+TOP_HOOK_EMOJI_RULES: List[tuple[str, tuple[str, ...]]] = [
+    ("🥊", ("boxing", "out of the ring", "asianjeff", "opponent", "matchup", "flying out")),
+    ("🧠", ("brain", "memory palace", "loci", "little book", "training take")),
+    ("🎙️", ("lucki", "vocals", "adlibs", "song", "record", "stage design", "ye ")),
+    ("📵", ("phone", "dm", "call", "paris game pressure")),
+    ("😳", ("shotgun", "regretted", "under his bed", "scary", "awkward room")),
+    ("⏳", ("countdown", "capacity", "max-capacity")),
+    ("🎮", ("marvel rivals", "anime", "malphite", "cosplay")),
+    ("✈️", ("japan", "arlington", "florida")),
+    ("🛒", ("barcode", "free-item", "chipotle")),
+    ("👀", ("emily", "cookout", "notes-tab", "little-sis", "baited", "comparison", "contact list")),
+]
+
+
+def top_hook_emoji_suffix(hook: str, *, title: str = "", handle: str = "", transcript_text: str = "") -> str:
+    haystack = f"{hook}\n{title}\n{handle}\n{transcript_text}".lower()
+    for emoji, tokens in TOP_HOOK_EMOJI_RULES:
+        if any(token in haystack for token in tokens):
+            return emoji
+    return ""
+
+
+def reference_top_hook_text(hook: str, *, title: str = "", handle: str = "", transcript_text: str = "") -> str:
     clean = " ".join(str(hook).split()).strip(" ,.;:-")
     if not clean:
         return ""
     has_emoji = any(is_emoji_char(char) for char in clean)
     if not has_emoji:
-        clean = f"{clean} 🤣🤣"
+        suffix = top_hook_emoji_suffix(clean, title=title, handle=handle, transcript_text=transcript_text)
+        if suffix:
+            clean = f"{clean} {suffix}"
     return clean
 
 
@@ -1263,7 +1318,12 @@ def headline_card(
     if not show:
         image.save(path)
         return ""
-    hook = reference_top_hook_text(hook_override or viewer_hook(title, handle, transcript_text=transcript_text, clip_id=clip_id))
+    hook = reference_top_hook_text(
+        hook_override or viewer_hook(title, handle, transcript_text=transcript_text, clip_id=clip_id),
+        title=title,
+        handle=handle,
+        transcript_text=transcript_text,
+    )
 
     # TikTok's built-in text card is authored in the source 720x1280 design
     # space and then upscaled with the video. Drawing natively at 1080 makes
@@ -2161,7 +2221,14 @@ def title_case(text: str) -> str:
     return " ".join(part.capitalize() for part in text.split())
 
 
-def campaign_kit_title(clip: Dict[str, Any], campaign_slug: str, transcript: Dict[str, Any]) -> str:
+def campaign_kit_title(
+    clip: Dict[str, Any],
+    campaign_slug: str,
+    transcript: Dict[str, Any],
+    hook_override: str = "",
+) -> str:
+    if hook_override:
+        return _trim_hook(re.sub(r"[\U0001F300-\U0001FAFF]+", "", str(hook_override)).strip(), max_words=16)
     project_name = db.CAMPAIGN_PROJECTS.get(campaign_slug, {}).get("name", title_case(campaign_slug) if campaign_slug else "Campaign")
     raw_title = " ".join(str(clip.get("title", "")).split())
     hook = raw_title.split(" - ", 1)[1].strip() if " - " in raw_title else ""
@@ -2572,7 +2639,7 @@ def build_review_kit(
         artifacts = write_artifacts(candidate, transcript, kit_dir, review_video, beats, profile, rendered_text, quota_recovery=quota_recovery)
         if profile in {db.FINAL_PROOF_PROFILE, db.CAMPAIGN_SHORT_PROFILE}:
             if profile == db.CAMPAIGN_SHORT_PROFILE:
-                kit_title = campaign_kit_title(clip, project_slug, transcript)
+                kit_title = campaign_kit_title(clip, project_slug, transcript, hook_override=selected_hook)
             else:
                 kit_title = str(clip.get("title", "")).strip() or str(rendered_text.get("hook_card", "")).strip() or "Streamer clip"
         else:

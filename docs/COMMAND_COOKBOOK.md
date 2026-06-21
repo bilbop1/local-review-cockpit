@@ -62,13 +62,23 @@ CLIPPING_OPS_NO_KEY=1 ./script/setup_buddy_no_key.sh
 
 Expected: Twitch, Kick, and Upload-Post credentials are missing; production/live posting remains blocked; demo/local proof can run.
 
+## Guided Buddy Install
+
+```bash
+./script/codex_buddy_bootstrap.sh
+```
+
+Runs the friend-install rail: no-key verification, local MiniMax/Hermes setup, Keychain credential prompts, exact Upload-Post profile lock, startup/Hermes job installation, and starter campaign job queueing. Use `--dry-run` to print the plan without changing local settings.
+
 ## Credential Storage
 
 ```bash
 ./script/store_credentials_keychain.sh
 ```
 
-Stores the local operator's Twitch/Kick/optional Upload-Post values in macOS Keychain under this app's service. Do not commit, print, or export those values.
+Stores the local operator's Twitch/Kick/optional Upload-Post values in macOS Keychain under this app's service. Do not commit, print, or export those values. Add Upload-Post last; TikTok is the default publish platform, and Instagram/YouTube/Facebook/X should stay blocked for posting until each account is warmed locally.
+
+The Upload-Post profile name is not a secret, but it is a safety lock. Set it through the Settings page or through `./script/codex_buddy_bootstrap.sh`; every publish request uses that one local profile.
 
 ## Hermes Local Checks
 
@@ -98,6 +108,7 @@ Queues work through the Hermes-native ledger. Do not bypass this path in normal 
 ```bash
 curl -s http://127.0.0.1:8765/api/review-schedule
 PYTHONPATH=backend backend/.venv/bin/python script/review_schedule_tick.py --json
+PYTHONPATH=backend backend/.venv/bin/python script/queue_buddy_campaign_kickoff.py --dry-run --json
 ```
 
 Expected normal behavior: scheduler queues due `scheduled_campaign_review_build` jobs only, capped at 8 per campaign and 24 total per local day. Fresh indexing uses 24h first, then 48h, 72h, 4d, and 5d.
@@ -112,13 +123,14 @@ PYTHONPATH=backend backend/.venv/bin/python script/audit_live_top_cards.py --ref
 
 Use after real review kits exist. Sidecar text alone does not prove visible subtitles or top-card parity.
 
-## Publish Dry-Run Status
+## Publish Status And Auto-Post Gates
 
 ```bash
 curl -s http://127.0.0.1:8765/api/publish/status
+PYTHONPATH=backend backend/.venv/bin/python script/publish_schedule_tick.py --json
 ```
 
-Expected before warm-up/key setup: yellow, key missing, warm-up incomplete, live not ready. That is correct.
+Expected before warm-up/key setup: yellow, key missing, warm-up incomplete, live not ready. That is correct. Expected before auto-post: approved jobs can be slotted, but due jobs do not live-post unless provider key, exact Upload-Post profile, warmed target platform, live mode, and local auto-post/manual confirmation all pass.
 
 ## GUI QA Boundary
 

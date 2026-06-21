@@ -58,7 +58,7 @@ print(f"- API version: {health.get('api_version')}")
 print(f"- No-key mode: {health.get('auth', {}).get('no_key_mode')}")
 print(f"- Readiness overall: {readiness.get('overall')}")
 print(f"- Hermes status: {agents.get('status')} / profile={agents.get('selected_profile')}")
-print(f"- Upload-Post: key={publish.get('provider', {}).get('api_key')} warmup={publish.get('provider', {}).get('warmup_complete')} live_ready={publish.get('provider', {}).get('live_ready')}")
+print(f"- Upload-Post: key={publish.get('provider', {}).get('api_key')} default_platforms={publish.get('default_platforms')} warmup={publish.get('provider', {}).get('warmup_complete')} live_ready={publish.get('provider', {}).get('live_ready')}")
 
 missing = []
 providers = health.get("auth", {}).get("providers", {})
@@ -67,7 +67,7 @@ if not providers.get("twitch", {}).get("ok"):
 if not providers.get("kick", {}).get("ok"):
     missing.append("Add Kick credentials only if this operator needs Kick monitoring; Kick is not production source proof by default.")
 if publish.get("provider", {}).get("api_key") == "missing":
-    missing.append("Add Upload-Post key later, after account warm-up, for dry-run/live publish testing.")
+    missing.append("Add Upload-Post key later, after TikTok account warm-up, for package checks and live publish testing.")
 if not agents.get("hermes_available"):
     missing.append("Install/configure local Hermes before expecting Hermes-native orchestration.")
 
@@ -80,7 +80,7 @@ else:
     print("- None detected by no-key verification.")
 
 print()
-print("Do not call live posting ready until /api/publish/status shows key configured, warm-up complete, live mode, and a confirmed approved kit.")
+print("Do not call live posting ready until /api/publish/status shows key configured, selected-platform warm-up complete, live mode, and a confirmed approved kit.")
 PY
 
 echo

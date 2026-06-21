@@ -1408,6 +1408,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json({"error": exc.code, "detail": exc.detail}, HTTPStatus.CONFLICT)
             elif path == "/api/publish/schedule/tick":
                 self.send_json(publishing.publish_schedule_tick(requested_by="api"))
+            elif path == "/api/publish/schedule/rebalance":
+                self.send_json(publishing.reschedule_approved_backlog(requested_by="api"))
             elif path == "/api/publish/jobs":
                 try:
                     self.send_json(publishing.create_publish_job(self.read_body()), HTTPStatus.OK)
@@ -1503,7 +1505,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     package = publishing.create_publish_package(
                         kit_id,
-                        platforms=body.get("platforms") if isinstance(body.get("platforms"), list) else publishing.SUPPORTED_PLATFORMS,
+                        platforms=body.get("platforms") if isinstance(body.get("platforms"), list) else publishing.DEFAULT_PUBLISH_PLATFORMS,
                         title=str(body.get("title", "")),
                         caption=str(body.get("caption", "")),
                     )

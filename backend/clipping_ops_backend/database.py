@@ -3943,27 +3943,46 @@ def _keychain_secret_present(account: str) -> bool:
 
 def uploadpost_publish_readiness_hint() -> Dict[str, Any]:
     key_present = _keychain_secret_present("uploadpost.api_key")
-    warmup = _system_setting_value("publish.uploadpost.warmup_complete", "false").strip().lower() in {"1", "true", "yes", "y"} or os.environ.get(
+    profile = _system_setting_value("publish.uploadpost.user", "").strip()
+    legacy_warmup = _system_setting_value("publish.uploadpost.warmup_complete", "false").strip().lower() in {"1", "true", "yes", "y"} or os.environ.get(
         "CLIPPING_OPS_UPLOADPOST_WARMUP_COMPLETE", ""
     ).strip().lower() in {"1", "true", "yes", "y"}
+    tiktok_warmup = _system_setting_value("publish.uploadpost.platform_warmup.tiktok", "").strip().lower()
+    warmup = (tiktok_warmup in {"1", "true", "yes", "y"}) if tiktok_warmup else legacy_warmup
     mode = _system_setting_value("publish.uploadpost.mode", "dry_run").strip().lower() or "dry_run"
     if mode not in {"dry_run", "live"}:
         mode = "dry_run"
+    auto_post = _system_setting_value("publish.auto_post_approved", "false").strip().lower() in {"1", "true", "yes", "y"}
     blockers: List[str] = []
+    if not profile:
+        blockers.append("Upload-Post profile is not configured")
     if not key_present:
         blockers.append("Upload-Post API key missing")
     if not warmup:
-        blockers.append("account warm-up incomplete")
+        blockers.append("TikTok account warm-up incomplete")
     if mode != "live":
         blockers.append("provider mode is dry-run")
-    live_ready = key_present and warmup and mode == "live"
+    if not auto_post:
+        blockers.append("auto-post is off")
+    live_ready = bool(profile) and key_present and warmup and mode == "live" and auto_post
     return {
         "live_ready": live_ready,
         "key_present": key_present,
         "warmup_complete": warmup,
+        "profile_configured": bool(profile),
+        "auto_post_approved": auto_post,
+        "user": profile or "local-operator",
+        "default_platforms": ["tiktok"],
+        "platforms": {
+            "tiktok": {
+                "warmup_complete": warmup,
+                "live_ready": live_ready,
+                "blockers": [blocker for blocker in blockers if blocker != "provider mode is dry-run"],
+            }
+        },
         "mode": mode,
         "blockers": blockers,
-        "detail": f"provider=uploadpost; key={'configured' if key_present else 'missing'}; warmup={warmup}; mode={mode}",
+        "detail": f"provider=uploadpost; default=tiktok; profile={'configured' if profile else 'missing'}; key={'configured' if key_present else 'missing'}; tiktok_warmup={warmup}; mode={mode}; auto_post={auto_post}",
     }
 
 

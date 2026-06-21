@@ -25,7 +25,7 @@ Your job as the incoming session:
 3. Help the local operator add their own API keys, Hermes profile, Discord config, and campaign access.
 4. Keep the backend/SQLite as source of truth.
 5. Use Hermes as the normal orchestration layer.
-6. Never publish before an approved review kit, configured provider, completed account warm-up, and final GUI confirmation; never submit payouts, connect accounts, rebrand accounts, or claim revenue guarantees.
+6. Never publish before an approved review kit, configured provider, exact Upload-Post profile, completed account warm-up, live mode, and local auto-post or final GUI confirmation; never submit payouts, connect accounts, rebrand accounts, or claim revenue guarantees.
 
 ## Truth Snapshot
 
@@ -71,6 +71,14 @@ backend/.venv/bin/python script/verify_streamer_composition.py
 
 No-key mode should show missing Twitch/Kick/Upload-Post credentials. That is correct until the operator supplies their own keys.
 
+For a friend install where the operator is ready to provide keys and wants Codex to set up the whole local lane, run:
+
+```bash
+./script/codex_buddy_bootstrap.sh
+```
+
+That script verifies the clone, configures MiniMax/Hermes, stores local Twitch/Kick/Upload-Post credentials, locks one Upload-Post profile, installs startup/Hermes jobs, and queues the first campaign refresh/source/build jobs.
+
 ## What The System Is
 
 Clipping Ops Cockpit is a local-first macOS clipping operations appliance.
@@ -82,12 +90,12 @@ The intended architecture is:
 - Hermes: normal orchestration layer for campaign refreshes, source discovery, review sweeps, and daily operations.
 - Deterministic scripts: source download, transcription, ffmpeg rendering, validation, packaging, and tests.
 - Discord: notifications only.
-- Human operator: the only entity allowed to approve review kits and confirm live publishing.
+- Human operator: the only entity allowed to approve review kits and arm live publishing.
 
 The system is not:
 
 - A cloud SaaS.
-- A blind autopublisher that can post without review approval, provider readiness, warm-up completion, and final human confirmation.
+- A blind autopublisher that can post without review approval, provider readiness, exact Upload-Post profile, platform warm-up, live mode, and local auto-post/manual confirmation.
 - A payout submitter.
 - A campaign account manager.
 - A revenue guarantee.
@@ -119,7 +127,13 @@ cd local-review-cockpit
 ./script/build_and_run.sh
 ```
 
-No-key mode should show Twitch/Kick/Upload-Post credentials as missing. That is correct. The local web cockpit should open at `http://127.0.0.1:8765/app`; production campaign and publish jobs must block or dry-run until the local operator supplies their own credentials, source access, account warm-up completion, and final confirmations.
+No-key mode should show Twitch/Kick/Upload-Post credentials as missing. That is correct. The local web cockpit should open at `http://127.0.0.1:8765/app`; production campaign and publish jobs must block or stay in package-check mode until the local operator supplies their own credentials, source access, account warm-up completion, and posting confirmation/auto-post settings.
+
+When credentials are ready, the full guided path is:
+
+```bash
+./script/codex_buddy_bootstrap.sh
+```
 
 ## Credential Setup Expectations
 
@@ -142,9 +156,16 @@ Kick:
 Hermes:
 
 - A local Hermes installation.
-- A working Hermes profile, usually `default`.
+- A working Hermes profile, normally `clipping-ops-minimax`.
 - Hermes cron/jobs installed from this repo.
 - No copied auth from the original machine.
+
+Upload-Post:
+
+- One local API key stored outside the repo.
+- One exact local profile name stored in backend settings.
+- TikTok can be the first posting platform after warm-up.
+- Instagram, YouTube, Facebook, and X stay capture-only until warmed and explicitly enabled later.
 
 Discord:
 
@@ -276,7 +297,7 @@ Current renderer rules:
 - Output size: 1080x1920.
 - Campaign final renders must include a persistent top summary hook card plus burned-in subtitles.
 - The top hook should create context and tension without spoiling the payoff, matching the TikTok reference direction from `https://www.tiktok.com/t/ZTBDvvEfD/`.
-- Campaign-short renders run a pre-render top-card quality gate. Hooks that are generic, duplicated, raw-title echoes, quote dumps, too short/long, or internally worded block as `blocked_hook_quality` before ffmpeg work starts; Hermes should retry with better hook copy or a better clip candidate instead of relying on Codex to curate cards by hand.
+- Campaign-short renders run a pre-render top-card quality gate. Hooks that are generic, duplicated, raw-title echoes, raw ASR fragments, repeated transcript loops, quote dumps, too short/long, or internally worded block as `blocked_hook_quality` before ffmpeg work starts; Hermes should retry with better hook copy or a better clip candidate instead of relying on Codex to curate cards by hand. If an existing unreviewed batch has weak cards, use `script/repair_review_top_cards.py` so only `needs_review` kits are rerendered.
 - The top hook card should visually match the reference: author the white rounded rectangle in 720x1280 source-design space, then upscale it into the 1080x1920 render with the video. Do not draw the hook as crisp native-1080 text. In final output the white card sits at x=99-980, y=336-493 and stays centered. Shorter hooks shrink to the visible text plus reference padding instead of carrying dead white space. In source space, use bundled TikTok Sans Bold at 34px, near-black text at RGB 22/22/22, 40px emoji raised 5px above the text visual top, white-card y=223, visual text y=237, 21px text inset, a 548px source-space text line cap, a 10px two-line gap, visual text width plus roughly 46px card padding, a 587px source-space max card width, a 330px source-space minimum card width, and a 14px card radius. After upscale, apply the top-anchored 5.2% visible-card vertical stretch; do not apply the old half-resolution bicubic softening pass, because it makes the glyph edges lighter and mushier than the TikTok reference. This lands around 51px text, 60px emoji, text y=358, a 15px gap, and a white-card fill whose decoded bbox matches the reference instead of being padded by shadow pixels. The 548px line cap is required so live hooks do not crowd the right card edge. TikTok Sans SemiBold, Avenir Next Demi Bold, and SFNS Semibold are fallbacks for machines without the bundled bold font; Arial Bold is emergency fallback only. Do not regress to native-1080 Arial, the old small pill-style TikTok ExtraBold overlay, the old 48px fallback, tiny pill cards, dead-space cards, over-softened glyph edges, compressed card/text height, shadow-measured green checks, or loose vertical padding inside the white card.
 - The top hook copy should read like a native human setup card: streamer/person + situation + tension. Avoid stiff report language like "messy detail," "story somehow turned," "proof," "review," or "selected feeder."
 - Top-card parity proof must come from `script/audit_top_card_reference.py` plus `script/audit_live_top_cards.py --refresh`; do not rely on sidecar text or regenerated overlays without decoded `review.mp4` frames.
@@ -324,20 +345,21 @@ For each kit:
 6. Approve only if it is worth manual prep.
 7. Reject with notes if anything feels off.
 
-Approval does not publish. It marks the kit as approved for preparation; live Upload-Post jobs still require provider readiness, account warm-up completion, and a final GUI confirmation.
+Approval marks the kit as ready, creates the publish package, and assigns the next future local `:14` slot. Fresh installs keep auto-post off. Once the local operator has configured their exact Upload-Post profile, added their key, warmed the selected platform, set live mode, and enabled auto-post, approved scheduled jobs become live Upload-Post jobs at their slot time.
 
 ## Upload-Post Autopost Readiness
 
-Upload-Post is the first live posting provider. This repo ships the dry-run/live provider interface, but it does not ship API keys or connected social accounts.
+Upload-Post is the first live posting provider. This repo ships the package-check/live provider interface, but it does not ship API keys or connected social accounts.
 
 Incoming operators should:
 
-1. Finish their own platform account warm-up.
+1. Finish their own platform account warm-up. TikTok is the default live platform; Instagram, YouTube, and Facebook remain blocked until separately warmed.
 2. Add their Upload-Post API key through macOS Keychain account `uploadpost.api_key` or private runtime env `UPLOAD_POST_API_KEY`.
-3. Set the Upload-Post user/profile in Settings.
-4. Keep provider mode as `Dry Run` until dry-run jobs pass on approved kits.
-5. Switch Settings to `Live` only when account warm-up is complete.
-6. Confirm each live post from the Review Kits publish panel.
+3. Set the exact Upload-Post user/profile in Settings. This local setting is the profile lock: publish jobs do not choose, inherit, or override a different Upload-Post profile.
+4. Keep auto-post off until package checks pass on approved kits.
+5. Mark only the warmed platform as ready in Settings.
+6. Switch Settings to `Live` only when account warm-up is complete.
+7. Confirm each live post from the Review Kits publish panel.
 
 Discord and Hermes may report publish job status, but SQLite remains the source of truth.
 

@@ -10,6 +10,8 @@ If you are an AI agent, start with `AGENT_START_HERE.md` and run:
 
 Use `script/setup_buddy_no_key.sh` to install and verify the same local system shape without transferring secrets.
 
+For the guided Codex install prompt and credential order, use `docs/codex-buddy-bootstrap.md`. For a manual expanded checklist, use `docs/codex-first-time-setup.md`.
+
 Clone the public GitHub source repo and build locally:
 
 ```text
@@ -35,7 +37,7 @@ It intentionally does not copy:
 - downloaded source media
 - rendered review kits
 
-Real campaign ingestion remains blocked until the local operator signs into their own services and provides their own credentials. Upload-Post live posting remains locked until the local operator provides their own key, completes account warm-up, switches live mode on, and confirms each post. The demo review-kit path works from local/sample media only.
+Real campaign ingestion remains blocked until the local operator signs into their own services and provides their own credentials. Upload-Post live posting remains locked until the local operator provides their own key, sets the exact local Upload-Post profile, completes account warm-up for the selected platform, switches live mode on, and arms local auto-post or confirms a post in the GUI. TikTok is the default publish platform; Instagram, YouTube, Facebook, and X stay blocked for posting until each account has its own warm-up evidence. The demo review-kit path works from local/sample media only.
 
 Normal app actions queue Hermes job intents. The local operator must configure their own Hermes profile/provider locally; this repo never transfers Hermes auth, model provider auth, Discord gateway credentials, or API keys.
 
@@ -53,6 +55,12 @@ cd local-review-cockpit
 ./script/setup_buddy_no_key.sh
 ```
 
+For a full local install after the operator is ready to provide keys:
+
+```bash
+./script/codex_buddy_bootstrap.sh
+```
+
 ## After Setup
 
 ```bash
@@ -60,3 +68,11 @@ cd local-review-cockpit
 ```
 
 Open `http://127.0.0.1:8765/app/settings` to see which capabilities are ready, degraded, or blocked.
+
+After credentials and Hermes setup, queue a starter pass:
+
+```bash
+PYTHONPATH=backend backend/.venv/bin/python script/queue_buddy_campaign_kickoff.py --json --force-new
+```
+
+Then open `http://127.0.0.1:8765/app/reviews`. If provider credentials, campaign source routes, Hermes, and media download tooling are healthy, first review kits should arrive after the starter jobs run.

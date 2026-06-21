@@ -12,7 +12,7 @@ This contract is for any incoming model working from this GitHub repo, including
 - No source invention. A clip is not production-proof until it has campaign rules, source URL, provenance, local media, transcript timing, rendered video, sidecars, and validation.
 - No content generation for clipping campaigns unless the campaign explicitly provides that brief and the operator approves that new lane. The normal lane is clipping verified source media.
 - No key transfer. Never copy, print, commit, zip, diagnose, or export API keys, Upload-Post keys, Hermes auth, Discord tokens, browser cookies, Keychain items, `.env` values, SQLite databases, source media, or rendered kits.
-- No live posting unless the backend gates pass: approved kit, provider key configured locally, account warm-up complete, dry-run/live provider readiness, and final GUI confirmation.
+- No live posting unless the backend gates pass: approved kit, provider key configured locally, exact local Upload-Post profile configured, account warm-up complete, live provider readiness, and local auto-post enablement or final GUI confirmation.
 - No payouts, account connections, account rebrands, gambling/affiliate/legal clearance, or revenue guarantees.
 - No foreground mouse-driven GUI testing unless the operator explicitly grants permission for that run.
 
@@ -30,7 +30,7 @@ This contract is for any incoming model working from this GitHub repo, including
 | Hermes unavailable/degraded | Orchestration not ready | Keep direct fallback advanced-only; do not claim Hermes-native ready. |
 | MiniMax profile missing | Wrong model lane | Configure local Hermes/MiniMax; do not spend Codex quota as the normal path. |
 | Fresh 24h clips missing | Supply thin | Expand only to 48h, 72h, 4d, then 5d; do not jump to old broad lookbacks. |
-| Upload-Post key missing/warm-up incomplete | Live posting locked | Use dry-run only. |
+| Upload-Post key missing/warm-up incomplete | Live posting locked | Keep auto-post off and use package checks only. |
 
 ## Required Incoming Flow
 

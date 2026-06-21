@@ -9,9 +9,7 @@ store_prompt() {
   local value
   read -rsp "$label: " value
   printf '\n'
-  security add-generic-password -U -a "$account" -s "$SERVICE" -w <<<"$value
-$value
-" >/dev/null
+  security add-generic-password -U -a "$account" -s "$SERVICE" -w "$value" >/dev/null
 }
 
 store_optional_prompt() {
@@ -24,17 +22,13 @@ store_optional_prompt() {
     echo "Skipped $account"
     return
   fi
-  security add-generic-password -U -a "$account" -s "$SERVICE" -w <<<"$value
-$value
-" >/dev/null
+  security add-generic-password -U -a "$account" -s "$SERVICE" -w "$value" >/dev/null
 }
 
 store_literal() {
   local account="$1"
   local value="$2"
-  security add-generic-password -U -a "$account" -s "$SERVICE" -w <<<"$value
-$value
-" >/dev/null
+  security add-generic-password -U -a "$account" -s "$SERVICE" -w "$value" >/dev/null
 }
 
 echo "Stores Clipping Ops OAuth credentials in macOS Keychain service: $SERVICE"

@@ -27,7 +27,9 @@ The backend job ledger is the normal interface between GUI intent, Hermes orches
 | `prepare_publish_package` | Prepare an approved kit for posting | `{"kit_id":"kit_x"}` |
 | `publish_dry_run` | Validate publish payload without posting | `{"publish_job_id":"pubjob_x"}` |
 | `publish_live` | Live Upload-Post job after final confirmation | `{"publish_job_id":"pubjob_x"}` |
-| `publish_schedule_tick` | Promote due scheduled dry-runs into Hermes publish jobs | `{}` |
+
+Upload-Post jobs never select a provider profile from job payload. The backend always sends the single configured local Upload-Post user/profile from Settings, so each operator's clone is pinned to their own profile.
+| `publish_schedule_tick` | Promote due scheduled publish jobs into Hermes work | `{}` |
 | `publish_status_sweep` | Refresh/report publish status | `{}` |
 
 Unsupported intents must be blocked, not guessed.
@@ -108,9 +110,9 @@ Build campaign reviews:
 
 Hermes build intents must run caption alignment before reporting success. The dispatcher calls `script/ensemble_retime_review_kits.py` for each created clip; if alignment blocks, the Hermes job blocks instead of handing the operator a mistimed review video.
 
-Hermes build intents must also respect the deterministic top-card quality gate before render. Campaign-short builders write `blocked_hook_quality` when every proposed hook is generic, duplicated, a raw-title echo, a quote dump, too short/long, or contains internal language. Treat that as a normal retry/selection blocker: pick a better clip or propose better hook copy, then queue a fresh build. Do not force a bad hook into Review Kits.
+Hermes build intents must also respect the deterministic top-card quality gate before render. Campaign-short builders write `blocked_hook_quality` when every proposed hook is generic, duplicated, a raw-title echo, a raw ASR fragment, a repeated transcript loop, a quote dump, too short/long, or contains internal language. Treat that as a normal retry/selection blocker: pick a better clip or propose better hook copy, then queue a fresh build. Do not force a bad hook into Review Kits.
 
-Hermes/MiniMax may pass hook proposals through the job payload as `hook_candidates_by_clip`, keyed by clip ID. Each candidate is a JSON object with at least `text` and `source`; the builder evaluates candidates in order and appends the deterministic local fallback after them.
+Hermes/MiniMax may pass hook proposals through the job payload as `hook_candidates_by_clip`, keyed by clip ID. Each candidate is a JSON object with at least `text` and `source`; the builder evaluates candidates in order and appends the deterministic local fallback after them. Good hook candidates should be viewer-facing summaries shaped like protagonist + situation + tension/payoff. Do not submit captions that start with `Streamer said:`, copy the clip title, or paste the first words of the transcript.
 
 ```json
 {
@@ -128,6 +130,14 @@ Hermes/MiniMax may pass hook proposals through the job payload as `hook_candidat
   }
 }
 ```
+
+Repair existing unreviewed top cards only:
+
+```bash
+PYTHONPATH=backend backend/.venv/bin/python script/repair_review_top_cards.py --apply --quota-recovery
+```
+
+Use `--only-failing` for a narrower pass. The repair command only targets non-demo `needs_review` campaign kits; already-approved and rejected kits are not rerendered.
 
 Scheduled fresh review build:
 
@@ -159,9 +169,9 @@ Publish schedule tick:
 {"intent":"publish_schedule_tick","requested_by":"publish-scheduler","payload":{}}
 ```
 
-Approving a non-demo review kit through the GUI creates or updates its publish package, then schedules one dry-run publish job into the next future local `:14` slot. The default cadence is eight slots per day: `00:14`, `03:14`, `06:14`, `09:14`, `12:14`, `15:14`, `18:14`, and `21:14`. Scheduled dry-runs stay in `publish_jobs` as `scheduled` until `/api/publish/schedule/tick` promotes due jobs into `publish_dry_run` Hermes work.
+Approving a non-demo review kit through the GUI creates or updates its publish package, then schedules one publish job into the next future local `:14` slot. The default cadence is eight slots per day: `00:14`, `03:14`, `06:14`, `09:14`, `12:14`, `15:14`, `18:14`, and `21:14`. Fresh installs keep auto-post off, so scheduled jobs are package checks. Once the local operator enables auto-post and the selected platform is ready, scheduled approved jobs are armed as live Upload-Post work and `/api/publish/schedule/tick` promotes due jobs into `publish_live`.
 
-Live publish is allowed only after the backend publish job exists, the kit is approved, provider key is configured locally, warm-up is complete, live mode is enabled, and the GUI final confirmation has created the `publish_live` job.
+Live publish is allowed only after the backend publish job exists, the kit is approved, the exact local Upload-Post profile is configured, provider key is configured locally, warm-up is complete, live mode is enabled, and local auto-post has armed the scheduled job or the GUI final confirmation has created the `publish_live` job.
 
 ## Read-Only Endpoints
 

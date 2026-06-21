@@ -23,7 +23,7 @@ def post_tick() -> Dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Queue due Clipping Ops publish dry-runs from approved review slots.")
+    parser = argparse.ArgumentParser(description="Queue due Clipping Ops publish work from approved review slots.")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     try:

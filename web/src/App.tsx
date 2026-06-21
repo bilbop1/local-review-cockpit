@@ -286,7 +286,7 @@ function Dashboard({ data, action }: { data: AppData; action: (intent: string, p
         <StatCard label="MiniMax Hermes" value={minimax?.status || "checking"} detail={`${data.agents?.selected_profile || "profile missing"} · ${data.agents?.model || "model missing"}`} tone={statusTone(minimax?.status)} icon={<Bot />} />
         <StatCard label="Campaign Status" value={`${projectsReady}/${data.projects.length || 0}`} detail="Projects with enough evidence to move" tone={projectsReady > 0 ? "green" : "yellow"} icon={<Sparkles />} />
         <StatCard label="Subtitle Proof" value={subtitleProof ? "Present" : "Needs proof"} detail="Review videos must have visible burned-in captions" tone={subtitleProof ? "green" : "yellow"} icon={<CheckCircle2 />} />
-        <StatCard label="Publish Lock" value={data.publish?.provider?.live_ready ? "Open" : "Locked"} detail="Live posting requires key, warm-up, approval, dry-run, confirmation" tone={data.publish?.provider?.live_ready ? "green" : "yellow"} icon={<Lock />} />
+        <StatCard label="Posting" value={data.publish?.auto_schedule?.auto_post_approved ? "On" : "Off"} detail="Approved clips post only when profile, key, TikTok warm-up, and auto-post are ready" tone={data.publish?.auto_schedule?.auto_post_approved ? "green" : "yellow"} icon={<Lock />} />
       </section>
       <section className="action-band">
         <div>
@@ -352,6 +352,10 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
   }, [data.kits, filter, campaign, query]);
 
   const selected = useMemo(() => filtered.find((kit) => kit.id === selectedId) || filtered[0] || data.kits[0], [data.kits, filtered, selectedId]);
+  const publishPlatforms = useMemo(() => {
+    const defaults = data.publish?.default_platforms || [];
+    return defaults.length ? defaults : ["tiktok"];
+  }, [data.publish?.default_platforms]);
 
   useEffect(() => {
     if (selected?.id) {
@@ -406,7 +410,7 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
     setError("");
     try {
       await apiPost(`/api/review-kits/${selected.id}/publish-prep`, {
-        platforms: ["tiktok", "instagram", "youtube"],
+        platforms: publishPlatforms,
         title: selected.title || "",
         caption: selected.title || ""
       });
@@ -427,7 +431,7 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
         mode: "dry_run",
         provider: "uploadpost",
         kit_id: selected.id,
-        platforms: ["tiktok", "instagram", "youtube"],
+        platforms: publishPlatforms,
         requested_by: "web-gui"
       });
       await refresh();
@@ -546,7 +550,7 @@ function ReviewKits({ data, refresh }: { data: AppData; refresh: () => Promise<v
             <div className="decision-panel">
               <div>
                 <h3>Decision</h3>
-                <p>Approval auto-slots a dry-run package. It does not live post.</p>
+                <p>Approval sends the clip into the next posting slot when auto-post is on.</p>
               </div>
               <div className="decision-actions">
                 <button className="primary" onClick={approve} disabled={!!busy}><CheckCircle2 size={16} /> {busy === "approve" ? "Approving" : "Approve + Slot"}</button>
@@ -644,19 +648,21 @@ function PublishPanel({
   const provider = status?.provider;
   const blockers = provider?.blockers || [];
   const scheduled = kit.publish_scheduled_at;
+  const autoPost = status?.auto_schedule?.auto_post_approved === true;
+  const isLiveJob = kit.publish_mode === "live";
   const slotSummary = status?.auto_schedule
     ? `${status.auto_schedule.slots_per_day || 8}/day at :${String(status.auto_schedule.slot_minute ?? 14).padStart(2, "0")}`
     : "8/day at :14";
   return (
     <section className="publish-panel">
       <div>
-        <p className="eyebrow">Publish lock</p>
-        <h3>{scheduled ? `Auto-slotted ${formatDate(scheduled)}` : approved ? "Approved kit can be slotted" : "Approve this kit before publish prep"}</h3>
-        <p>{scheduled ? `Dry-run package is waiting for its ${slotSummary} slot.` : "Live Upload-Post stays locked until key, warm-up, live mode, and final confirmation pass."}</p>
+        <p className="eyebrow">Posting</p>
+        <h3>{scheduled ? `${isLiveJob ? "Posts" : "Checks"} ${formatDate(scheduled)}` : approved ? "Approved kit can enter the queue" : "Approve this kit first"}</h3>
+        <p>{scheduled ? `${autoPost && isLiveJob ? "This clip is armed for TikTok." : "This clip is queued for a final package check."} Schedule is ${slotSummary}.` : "TikTok posting turns on after the key, profile, warm-up, and auto-post switch are ready."}</p>
       </div>
       <div className="publish-controls">
         <button onClick={onPrepare} disabled={!approved || !!busy}><Send size={16} /> Rebuild Package</button>
-        <button onClick={onDryRun} disabled={!approved || !!busy}><ShieldCheck size={16} /> Dry Run Now</button>
+        <button onClick={onDryRun} disabled={!approved || !!busy}><ShieldCheck size={16} /> Check Package Now</button>
         <button disabled><Lock size={16} /> Post Now</button>
       </div>
       {kit.publish_status && (
@@ -667,7 +673,7 @@ function PublishPanel({
         </div>
       )}
       <div className="blocker-list">
-        {(blockers.length ? blockers : ["Live posting is intentionally locked until the provider is fully ready."]).slice(0, 4).map((blocker) => (
+        {(blockers.length ? blockers : [autoPost ? "TikTok auto-posting is on for approved queued clips." : "Auto-posting is off."]).slice(0, 4).map((blocker) => (
           <span key={blocker}><Lock size={13} /> {blocker}</span>
         ))}
       </div>
@@ -761,6 +767,9 @@ function Readiness({ data }: { data: AppData }) {
 function SettingsPage({ data, refresh }: { data: AppData; refresh: () => Promise<void> }) {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
+  const uploadPlatforms = data.publish?.provider?.platforms || {};
+  const runway = data.publish?.runway || {};
+  const autoPost = data.publish?.auto_schedule?.auto_post_approved === true;
   async function updatePublish(body: Record<string, unknown>) {
     setBusy("publish");
     setMessage("");
@@ -768,6 +777,19 @@ function SettingsPage({ data, refresh }: { data: AppData; refresh: () => Promise
       await apiPost("/api/publish/settings", body);
       await refresh();
       setMessage("Settings updated.");
+    } catch (exc) {
+      setMessage(exc instanceof Error ? exc.message : String(exc));
+    } finally {
+      setBusy("");
+    }
+  }
+  async function rescheduleApprovedSlots() {
+    setBusy("reschedule");
+    setMessage("");
+    try {
+      const result = await apiPost<Record<string, unknown>>("/api/publish/schedule/rebalance", {});
+      await refresh();
+      setMessage(`Rescheduled ${String(result.rescheduled_count ?? 0)} approved publish slot(s).`);
     } catch (exc) {
       setMessage(exc instanceof Error ? exc.message : String(exc));
     } finally {
@@ -847,16 +869,29 @@ function SettingsPage({ data, refresh }: { data: AppData; refresh: () => Promise
           <Pill tone={data.publish?.provider?.live_ready ? "green" : "yellow"} label={data.publish?.provider?.live_ready ? "live ready" : "locked"} />
         </div>
         <div className="button-row">
-          <button onClick={() => updatePublish({ warmup_complete: true })} disabled={!!busy}>Mark Warm-up Complete</button>
-          <button onClick={() => updatePublish({ warmup_complete: false })} disabled={!!busy}>Lock Warm-up</button>
-          <button onClick={() => updatePublish({ mode: "dry_run" })} disabled={!!busy}>Dry-Run Mode</button>
-          <button onClick={() => updatePublish({ mode: "live" })} disabled={!!busy}>Live Mode Gate</button>
+          <button onClick={() => updatePublish({ platform_warmup: { tiktok: true } })} disabled={!!busy}>TikTok Warm</button>
+          <button onClick={() => updatePublish({ platform_warmup: { tiktok: false } })} disabled={!!busy}>TikTok Locked</button>
+          <button onClick={() => updatePublish({ auto_post_approved: true, mode: "live", platform_warmup: { tiktok: true } })} disabled={!!busy}>Auto-Post On</button>
+          <button onClick={() => updatePublish({ auto_post_approved: false })} disabled={!!busy}>Auto-Post Off</button>
+          <button onClick={rescheduleApprovedSlots} disabled={!!busy}><RefreshCw size={16} /> Reschedule Approved</button>
+        </div>
+        <div className="health-list">
+          {Object.entries(uploadPlatforms).map(([platform, status]) => (
+            <div key={platform}>
+              <Pill tone={status.live_ready ? "green" : status.warmup_complete ? "yellow" : "grey"} label={status.live_ready ? "live ready" : status.warmup_complete ? "warm" : "blocked"} />
+              <strong>{platform}</strong>
+              <span>{(status.blockers || [])[0] || "Ready for selected Upload-Post mode."}</span>
+            </div>
+          ))}
         </div>
         <div className="publish-summary">
-          <Pill tone="yellow" label="auto-slot" />
+          <Pill tone={autoPost ? "green" : "yellow"} label={autoPost ? "posting on" : "posting off"} />
           <span>{data.publish?.auto_schedule?.slots_per_day || 8}/day</span>
           <span>minute :{String(data.publish?.auto_schedule?.slot_minute ?? 14).padStart(2, "0")}</span>
           <span>{data.publish?.auto_schedule?.timezone || "local time"}</span>
+          <span>default {(data.publish?.default_platforms || ["tiktok"]).join(", ")}</span>
+          <span>profile {data.publish?.provider?.user || "not configured"}</span>
+          <span>runway {runway.scheduled_count || 0} clips / {runway.estimated_days || 0} days</span>
         </div>
         <p>Keys stay outside the repo. Use Keychain/private runtime config only.</p>
       </section>
