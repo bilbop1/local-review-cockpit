@@ -20,7 +20,7 @@ The low-quota incoming path is:
 
 That command verifies the source-build clone without requiring secrets. Missing Twitch/Kick/Upload-Post credentials are expected in no-key mode.
 
-For a guided new-operator install, hand Codex the repo URL plus the install-mode prompt below. The setup flow verifies no-key mode first, configures Hermes/MiniMax locally, stores local Twitch/Kick/Upload-Post credentials, locks one Upload-Post profile, then queues the first campaign research/build wave.
+For a guided new-operator install, hand Codex the repo URL plus the install-mode prompt below. The setup flow verifies no-key mode first, verifies existing Hermes/MiniMax without disturbing other Hermes profiles, stores local Twitch/Kick/Upload-Post credentials, locks one Upload-Post profile, then queues the first campaign research/build wave.
 
 ## Give Codex This Starting Command
 
@@ -31,6 +31,8 @@ https://github.com/bilbop1/local-review-cockpit
 Assume I am not technical. Clone the repo, then read AGENT_START_HERE.md and docs/codex-buddy-bootstrap.md before changing anything. Explain in plain English what you need, ask me for one thing at a time, and do not ask me to edit files manually unless there is no safer option.
 
 After the no-key clone check passes, run ./script/codex_buddy_bootstrap.sh and guide me through the prompts. First verify whether Hermes is already wired to the `clipping-ops-minimax` / MiniMax-M3 profile. Only ask me for a MiniMax API key if Hermes is not already wired or Codex cannot use the existing MiniMax setup. Otherwise ask me for: Twitch client ID and secret, Kick client ID and secret if I have Kick, Upload-Post API key, exact Upload-Post profile name, whether TikTok is warmed, and whether to turn on approved-kit auto-posting. If I do not know where to find one of those, walk me through it in the browser.
+
+Be careful with my existing Hermes install. Do not delete, rename, overwrite, repair, or reconfigure my existing Hermes profiles, default profile, cron jobs, auth files, aliases, or unrelated profile `.env` files. Install Clipping Ops beside them under its own `clipping-ops-minimax` sidecar profile and Clipping Ops scripts/jobs only. If that sidecar profile is missing, create only that profile after explaining it. Leave everything else in Hermes running and operable as-is.
 
 Never print, commit, or store secrets in repo files. Store secrets only through the provided local scripts/Keychain flow. Keep posting TikTok-only unless I explicitly say another platform is warmed. When setup is done, verify http://127.0.0.1:8765/app works, queue starter campaign research/build jobs, and tell me to review first kits at http://127.0.0.1:8765/app/reviews in about 45-90 minutes.
 ```
@@ -148,7 +150,7 @@ Canonical agent docs:
 - [Hermes job contract](docs/HERMES_JOB_CONTRACT.md)
 - [Codex buddy bootstrap](docs/codex-buddy-bootstrap.md)
 - [Codex first-time setup](docs/codex-first-time-setup.md)
-- [v0.3.1 release notes](docs/release-notes/v0.3.1.md)
+- [v0.3.2 release notes](docs/release-notes/v0.3.2.md)
 - [Campaign selection standard](docs/campaign-selection.md)
 - [Caption style standard](docs/caption-style.md)
 - [Streamer composition standard](docs/streamer-composition.md)

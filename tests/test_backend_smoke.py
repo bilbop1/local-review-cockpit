@@ -1629,6 +1629,14 @@ class BackendSmokeTests(unittest.TestCase):
         self.assertEqual(review_job["payload"]["freshness_ladder_hours"], list(db.FRESHNESS_LADDER_HOURS))
         self.assertEqual(review_job["payload"]["selection_mode"], "fresh_best_candidate")
 
+    def test_hermes_install_preserves_default_profile_without_explicit_cleanup(self):
+        script = (Path(__file__).resolve().parents[1] / "script" / "install_hermes_clip_ops.sh").read_text(encoding="utf-8")
+
+        self.assertIn("CLIPPING_OPS_ALLOW_LEGACY_DEFAULT_CRON_CLEANUP", script)
+        self.assertIn("--cleanup-legacy-default", script)
+        self.assertIn('if [[ "$ALLOW_LEGACY_DEFAULT_CLEANUP" != "1" ]]', script)
+        self.assertIn("Existing default/other Hermes profiles and cron jobs will be left untouched.", script)
+
     def test_visible_jobs_compact_omits_heavy_json_and_truncates_text(self):
         job_id = db.create_job(
             "heavy job",

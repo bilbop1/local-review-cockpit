@@ -11,7 +11,7 @@ For the shortest guided install, give Codex the starting command in [docs/codex-
 ## Pasteable Operator Prompt
 
 ```text
-Get into Clipping Ops installation mode for https://github.com/bilbop1/local-review-cockpit. Assume I am not technical. Clone the repo, read AGENT_START_HERE.md and docs/codex-buddy-bootstrap.md, then run ./script/codex_buddy_bootstrap.sh. Verify existing Hermes/MiniMax first, and only ask me for a MiniMax API key if the `clipping-ops-minimax` / MiniMax-M3 lane is missing or unusable. Then ask me for one thing at a time in plain English: Twitch client ID/secret, Kick client ID/secret if I have Kick, Upload-Post API key, exact Upload-Post profile name, TikTok warm-up status, and whether to turn on approved-kit auto-posting. Do not print, commit, or store secrets in repo files.
+Get into Clipping Ops installation mode for https://github.com/bilbop1/local-review-cockpit. Assume I am not technical. Clone the repo, read AGENT_START_HERE.md and docs/codex-buddy-bootstrap.md, then run ./script/codex_buddy_bootstrap.sh. Verify existing Hermes/MiniMax first, and only ask me for a MiniMax API key if the `clipping-ops-minimax` / MiniMax-M3 lane is missing or unusable. Install Clipping Ops beside my existing Hermes setup; do not overwrite, delete, rename, reconfigure, or clean up my existing Hermes profiles, default profile, cron jobs, auth files, aliases, or unrelated profile `.env` files. Then ask me for one thing at a time in plain English: Twitch client ID/secret, Kick client ID/secret if I have Kick, Upload-Post API key, exact Upload-Post profile name, TikTok warm-up status, and whether to turn on approved-kit auto-posting. Do not print, commit, or store secrets in repo files.
 ```
 
 ## Agent Setup Order
@@ -33,10 +33,13 @@ cd local-review-cockpit
 3. Configure Hermes and MiniMax locally.
 
 ```bash
+./script/verify_minimax_hermes.sh
 ./script/configure_minimax_hermes_local.sh
 ./script/verify_minimax_hermes.sh
 ./script/install_hermes_clip_ops.sh
 ```
+
+Run `configure_minimax_hermes_local.sh` only if verification fails. It should create/repair only the `clipping-ops-minimax` sidecar profile, never the operator's default or unrelated Hermes profiles.
 
 4. Store source credentials only after no-key proof passes.
 

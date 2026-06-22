@@ -3,10 +3,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HERMES_PROFILE="${HERMES_PROFILE:-clipping-ops-minimax}"
+ALLOW_LEGACY_DEFAULT_CLEANUP="${CLIPPING_OPS_ALLOW_LEGACY_DEFAULT_CRON_CLEANUP:-0}"
 
 for arg in "$@"; do
   case "$arg" in
     --repair)
+      ;;
+    --cleanup-legacy-default)
+      ALLOW_LEGACY_DEFAULT_CLEANUP=1
       ;;
     *)
       echo "Unknown argument: $arg" >&2
@@ -29,6 +33,12 @@ fi
 if ! hermes profile list | awk '{print $1}' | grep -Fxq "$HERMES_PROFILE"; then
   echo "Hermes profile '$HERMES_PROFILE' does not exist. Run ./script/configure_minimax_hermes_local.sh first." >&2
   exit 1
+fi
+
+echo "Installing Clipping Ops as a Hermes sidecar under profile: $HERMES_PROFILE"
+echo "Existing default/other Hermes profiles and cron jobs will be left untouched."
+if [[ "$ALLOW_LEGACY_DEFAULT_CLEANUP" == "1" ]]; then
+  echo "Advanced cleanup enabled: legacy default-profile Clipping Ops cron jobs may be removed."
 fi
 
 job_id_for_name() {
@@ -54,6 +64,9 @@ PY
 
 remove_default_job() {
   local name="$1"
+  if [[ "$ALLOW_LEGACY_DEFAULT_CLEANUP" != "1" ]]; then
+    return 0
+  fi
   python3 - "$name" <<'PY' | while IFS= read -r job_id; do
 import json
 import sys

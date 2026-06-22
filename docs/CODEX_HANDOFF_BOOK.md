@@ -77,7 +77,7 @@ For a friend install where the operator is ready to provide keys and wants Codex
 ./script/codex_buddy_bootstrap.sh
 ```
 
-That script verifies the clone, checks existing MiniMax/Hermes wiring before asking for any MiniMax key, stores local Twitch/Kick/Upload-Post credentials, locks one Upload-Post profile, installs startup/Hermes jobs, and queues the first campaign refresh/source/build jobs.
+That script verifies the clone, checks existing MiniMax/Hermes wiring before asking for any MiniMax key, stores local Twitch/Kick/Upload-Post credentials, locks one Upload-Post profile, installs startup/Hermes jobs, and queues the first campaign refresh/source/build jobs. It must install Clipping Ops beside the operator's existing Hermes setup, preserving default/other profiles, auth, aliases, cron jobs, and unrelated `.env` files.
 
 ## What The System Is
 
@@ -159,6 +159,7 @@ Hermes:
 - A working Hermes profile, normally `clipping-ops-minimax`.
 - Hermes cron/jobs installed from this repo.
 - No copied auth from the original machine.
+- No mutation of the operator's existing default/other Hermes profiles, aliases, auth files, unrelated profile `.env` files, or non-Clipping-Ops cron jobs.
 
 Upload-Post:
 

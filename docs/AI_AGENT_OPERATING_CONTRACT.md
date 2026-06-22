@@ -7,6 +7,7 @@ This contract is for any incoming model working from this GitHub repo, including
 - Backend/SQLite is the source of truth. Do not use Discord, prose, or memory as state.
 - Hermes is orchestration. Deterministic scripts do source checks, downloads, transcription, rendering, validation, and tests.
 - Clipping Ops Hermes must use the local `clipping-ops-minimax` profile with MiniMax for normal operation. Codex/OpenAI fallback is not green readiness proof.
+- Existing Hermes installs are user-owned. Do not delete, rename, overwrite, repair, or reconfigure default/other Hermes profiles, auth files, aliases, unrelated `.env` files, or non-Clipping-Ops cron jobs. Install Clipping Ops as a sidecar under `clipping-ops-minimax`.
 - GUI approval is human-owned. Agents may recommend, queue, validate, or report. Agents may not approve review kits or confirm live posts.
 - No fake readiness. Green means fresh proof from tests, API responses, artifacts, or backend records.
 - No source invention. A clip is not production-proof until it has campaign rules, source URL, provenance, local media, transcript timing, rendered video, sidecars, and validation.

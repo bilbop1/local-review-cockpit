@@ -12,6 +12,7 @@ Work from repository truth:
 - Treat SQLite/backend as source of truth.
 - Treat Hermes as orchestration.
 - Treat `clipping-ops-minimax` / `MiniMax-M3` as the normal Hermes profile/model for Clipping Ops.
+- Treat any pre-existing Hermes profiles, default profile, cron jobs, auth files, aliases, and non-Clipping-Ops `.env` files as user-owned. Do not overwrite, delete, rename, reconfigure, or clean them up.
 - Treat scripts as deterministic media/test workers.
 - Treat Discord as notifications only.
 - Treat the browser cockpit at `http://127.0.0.1:8765/app` as the human approval surface.
@@ -37,7 +38,7 @@ For a friend/buddy install where the operator is ready to provide local keys, us
 ./script/codex_buddy_bootstrap.sh
 ```
 
-That guided path verifies no-key mode, checks existing MiniMax/Hermes wiring before asking for any MiniMax key, stores local Twitch/Kick/Upload-Post credentials, locks the operator's exact Upload-Post profile, installs startup/Hermes jobs, and queues first campaign research/build jobs. If the operator is not technical, enter installation mode: ask for one credential at a time in plain English and guide them through finding keys in the browser rather than asking them to edit files manually.
+That guided path verifies no-key mode, checks existing MiniMax/Hermes wiring before asking for any MiniMax key, stores local Twitch/Kick/Upload-Post credentials, locks the operator's exact Upload-Post profile, installs startup/Hermes jobs, and queues first campaign research/build jobs. If the operator is not technical, enter installation mode: ask for one credential at a time in plain English and guide them through finding keys in the browser rather than asking them to edit files manually. Clipping Ops must install beside existing Hermes, not on top of it.
 
 ## Read These Next
 
@@ -53,7 +54,7 @@ That guided path verifies no-key mode, checks existing MiniMax/Hermes wiring bef
 
 Normal production review flow is not a broad 35-day scrape. Hermes should index top Twitch clips from the last 24 hours first, then widen only if supply is stale or empty: 48h, 72h, 4d, then 5d. The review factory target is three active streamer campaigns, one kit per campaign every three hours, capped at eight per campaign and 24 total per local day.
 
-Use `./script/configure_minimax_hermes_local.sh` only on the operator's own machine to store their MiniMax key locally. Then run `./script/verify_minimax_hermes.sh` and `./script/install_hermes_clip_ops.sh`. Never commit or print the key.
+Use `./script/configure_minimax_hermes_local.sh` only on the operator's own machine and only when existing Hermes/MiniMax verification fails. It may create or repair the dedicated `clipping-ops-minimax` sidecar profile, but it must not alter the operator's default or unrelated Hermes profiles. Then run `./script/verify_minimax_hermes.sh` and `./script/install_hermes_clip_ops.sh`. Never commit or print the key.
 
 ## Do Not Improvise
 

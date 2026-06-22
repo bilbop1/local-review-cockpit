@@ -12,6 +12,8 @@ Assume I am not technical. Clone the repo, then read AGENT_START_HERE.md and doc
 
 After the no-key clone check passes, run ./script/codex_buddy_bootstrap.sh and guide me through the prompts. First verify whether Hermes is already wired to the `clipping-ops-minimax` / MiniMax-M3 profile. Only ask me for a MiniMax API key if Hermes is not already wired or Codex cannot use the existing MiniMax setup. Otherwise ask me for: Twitch client ID and secret, Kick client ID and secret if I have Kick, Upload-Post API key, exact Upload-Post profile name, whether TikTok is warmed, and whether to turn on approved-kit auto-posting. If I do not know where to find one of those, walk me through it in the browser.
 
+Be careful with my existing Hermes install. Do not delete, rename, overwrite, repair, or reconfigure my existing Hermes profiles, default profile, cron jobs, auth files, aliases, or unrelated profile `.env` files. Install Clipping Ops beside them under its own `clipping-ops-minimax` sidecar profile and Clipping Ops scripts/jobs only. If that sidecar profile is missing, create only that profile after explaining it. Leave everything else in Hermes running and operable as-is.
+
 Never print, commit, or store secrets in repo files. Store secrets only through the provided local scripts/Keychain flow. Keep posting TikTok-only unless I explicitly say another platform is warmed. When setup is done, verify http://127.0.0.1:8765/app works, queue starter campaign research/build jobs, and tell me to review first kits at http://127.0.0.1:8765/app/reviews in about 45-90 minutes.
 ```
 
@@ -38,7 +40,7 @@ The script does the boring parts in order:
 
 1. Verifies the source clone in no-key mode.
 2. Builds and starts the local web cockpit.
-3. Configures the local MiniMax-backed Hermes profile.
+3. Verifies the existing MiniMax-backed Hermes sidecar profile, creating/repairing only `clipping-ops-minimax` if needed.
 4. Stores Twitch, Kick, and Upload-Post credentials in macOS Keychain.
 5. Locks the exact Upload-Post profile into local backend settings.
 6. Keeps posting limited to TikTok unless another platform is warmed and enabled later.
@@ -51,6 +53,16 @@ For a non-mutating check:
 ./script/codex_buddy_bootstrap.sh --dry-run
 PYTHONPATH=backend backend/.venv/bin/python script/queue_buddy_campaign_kickoff.py --dry-run --json
 ```
+
+## Existing Hermes Safety
+
+Clipping Ops is a sidecar install. Codex must preserve the operator's existing Hermes setup:
+
+- Do not touch the default Hermes profile unless the operator explicitly asks for unrelated Hermes maintenance.
+- Do not delete, rename, or reconfigure existing Hermes profiles, aliases, auth files, cron jobs, or unrelated profile `.env` files.
+- Install Clipping Ops cron jobs only under `clipping-ops-minimax`.
+- Store Clipping Ops helper scripts only under `~/.hermes/profiles/clipping-ops-minimax/scripts/`.
+- Do not run legacy default-profile cleanup unless the operator explicitly understands and requests it through `CLIPPING_OPS_ALLOW_LEGACY_DEFAULT_CRON_CLEANUP=1` or `--cleanup-legacy-default`.
 
 ## Posting Safety
 

@@ -67,7 +67,7 @@ Expected: Twitch, Kick, and Upload-Post credentials are missing; production/live
 Give a non-technical operator this Codex starting command first:
 
 ```text
-Get into Clipping Ops installation mode for https://github.com/bilbop1/local-review-cockpit. Assume I am not technical. Clone the repo, read AGENT_START_HERE.md and docs/codex-buddy-bootstrap.md, then run ./script/codex_buddy_bootstrap.sh. Verify existing Hermes/MiniMax first, and only ask me for a MiniMax API key if the `clipping-ops-minimax` / MiniMax-M3 lane is missing or unusable. Then ask me for one thing at a time in plain English: Twitch client ID/secret, Kick client ID/secret if I have Kick, Upload-Post API key, exact Upload-Post profile name, TikTok warm-up status, and whether to turn on approved-kit auto-posting. Do not print, commit, or store secrets in repo files.
+Get into Clipping Ops installation mode for https://github.com/bilbop1/local-review-cockpit. Assume I am not technical. Clone the repo, read AGENT_START_HERE.md and docs/codex-buddy-bootstrap.md, then run ./script/codex_buddy_bootstrap.sh. Verify existing Hermes/MiniMax first, and only ask me for a MiniMax API key if the `clipping-ops-minimax` / MiniMax-M3 lane is missing or unusable. Install Clipping Ops beside my existing Hermes setup; do not overwrite, delete, rename, reconfigure, or clean up my existing Hermes profiles, default profile, cron jobs, auth files, aliases, or unrelated profile `.env` files. Then ask me for one thing at a time in plain English: Twitch client ID/secret, Kick client ID/secret if I have Kick, Upload-Post API key, exact Upload-Post profile name, TikTok warm-up status, and whether to turn on approved-kit auto-posting. Do not print, commit, or store secrets in repo files.
 ```
 
 ```bash
@@ -97,7 +97,7 @@ hermes cron list
 PYTHONPATH=backend backend/.venv/bin/python script/hermes_job_dispatcher.py --limit 1 --json
 ```
 
-`install_hermes_clip_ops.sh` installs Clipping Ops jobs under `clipping-ops-minimax` by default. A local Hermes install must already exist on the operator's machine. The MiniMax key must be supplied locally; never paste it into repo files.
+`install_hermes_clip_ops.sh` installs Clipping Ops jobs under `clipping-ops-minimax` by default. A local Hermes install must already exist on the operator's machine. The MiniMax key must be supplied locally only if the existing Hermes/MiniMax sidecar is missing or unusable; never paste it into repo files. Existing default/other Hermes profiles and cron jobs are left untouched unless the operator explicitly opts into legacy cleanup with `CLIPPING_OPS_ALLOW_LEGACY_DEFAULT_CRON_CLEANUP=1` or `--cleanup-legacy-default`.
 
 ## Queue A Job
 
